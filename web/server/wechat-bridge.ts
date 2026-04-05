@@ -678,17 +678,25 @@ export class WeChatBridge {
       const text = relayData?.pendingText ?? "";
       if (relayData) relayData.pendingText = "";
 
-      // Send the accumulated text
+      const result = message as Record<string, unknown>;
+      const data = result.data as Record<string, unknown> | undefined;
+
+      // Send the accumulated streaming text
       if (text.trim()) {
         const chunks = splitForWeChat(text.trim());
+        for (const chunk of chunks) {
+          this.sendReply(userId, chunk).catch(() => {});
+        }
+      } else if (typeof data?.result === "string" && data.result.trim()) {
+        // Slash commands (e.g. /cost, /compact) return their response directly
+        // in data.result without streaming — send it when no stream text was captured.
+        const chunks = splitForWeChat(data.result.trim());
         for (const chunk of chunks) {
           this.sendReply(userId, chunk).catch(() => {});
         }
       }
 
       // Check for errors
-      const result = message as Record<string, unknown>;
-      const data = result.data as Record<string, unknown> | undefined;
       if (data?.is_error) {
         const errors = data.errors as string[] | undefined;
         if (errors?.length) {
