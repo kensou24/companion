@@ -38,8 +38,6 @@ const SAFE_TOOLS = new Set([
   "TodoRead", "TaskList", "TaskGet",
 ]);
 
-const DANGEROUS_BASH_PATTERN = /rm\s|rm$|rmdir|mkfs|dd\s|>\s*\/dev|chmod\s|chown\s|shutdown|reboot/i;
-
 const WECHAT_MSG_LIMIT = 4000;
 
 const MIN_RECONNECT_DELAY_MS = 2_000;
@@ -77,14 +75,12 @@ export function parseCommand(text: string): ParsedCommand {
   return { type: "command", command, args };
 }
 
-/** Check if a tool use is considered dangerous. */
-export function isDangerousTool(toolName: string, input: Record<string, unknown>): boolean {
+/** Check if a tool use is considered dangerous.
+ *  If the CLI sent a control_request, it already decided this tool needs approval.
+ *  We only auto-approve truly read-only tools from SAFE_TOOLS; everything else is dangerous. */
+export function isDangerousTool(toolName: string, _input: Record<string, unknown>): boolean {
   if (SAFE_TOOLS.has(toolName)) return false;
-  if (toolName === "Bash") {
-    const cmd = String(input.command ?? "");
-    return DANGEROUS_BASH_PATTERN.test(cmd);
-  }
-  // Write, Edit, Agent, and unknown tools are considered dangerous
+  // Bash, Write, Edit, Agent, Skill, and all unknown tools are considered dangerous
   return true;
 }
 
