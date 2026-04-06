@@ -42,6 +42,10 @@ const DANGEROUS_BASH_PATTERN = /rm\s|rm$|rmdir|mkfs|dd\s|>\s*\/dev|chmod\s|chown
 
 const WECHAT_MSG_LIMIT = 4000;
 
+const MIN_RECONNECT_DELAY_MS = 2_000;
+const MAX_RECONNECT_DELAY_MS = 60_000;
+const MAX_RECONNECT_ATTEMPTS = 20;
+
 const PERSIST_PATH = join(COMPANION_HOME, "wechat-sessions.json");
 
 const HELP_TEXT = `Companion WeChat Bot Commands:
@@ -170,6 +174,11 @@ export class WeChatBridge {
   private userIdBySession = new Map<string, string>();
   // QR code data for web UI display
   private qrCodeData: string | null = null;
+  // Auto-reconnect state
+  private reconnectDelay = MIN_RECONNECT_DELAY_MS;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private intentionalStop = false;
+  private reconnectAttempt = 0;
 
   constructor(wsBridge: WsBridge, orchestrator: SessionOrchestrator) {
     this.wsBridge = wsBridge;
@@ -186,6 +195,8 @@ export class WeChatBridge {
    */
   async start(): Promise<void> {
     if (this.running || this.starting) return;
+    this.intentionalStop = false;
+    this.reconnectAttempt = 0;
     this.starting = true;
     this.startError = null;
 
@@ -234,15 +245,22 @@ export class WeChatBridge {
       console.error("[wechat] Poll loop crashed:", err);
       this.running = false;
       this.starting = false;
+      if (!this.intentionalStop) {
+        this.scheduleReconnect();
+      }
     });
 
     this.running = true;
     this.starting = false;
+    this.reconnectDelay = MIN_RECONNECT_DELAY_MS;
+    this.reconnectAttempt = 0;
     this.qrCodeData = null;
     console.log("[wechat] Bot started and connected");
   }
 
   stop(): void {
+    this.intentionalStop = true;
+    this.clearReconnectTimer();
     if (!this.bot) return;
     try {
       this.bot.stop();
@@ -264,6 +282,85 @@ export class WeChatBridge {
 
   get qrCode(): string | null {
     return this.qrCodeData;
+  }
+
+  private scheduleReconnect(): void {
+    if (this.intentionalStop) return;
+
+    this.reconnectAttempt++;
+    if (this.reconnectAttempt > MAX_RECONNECT_ATTEMPTS) {
+      this.startError = `Failed to reconnect after ${MAX_RECONNECT_ATTEMPTS} attempts. Use the web UI to re-login.`;
+      console.error(`[wechat] ${this.startError}`);
+      return;
+    }
+
+    const delay = this.reconnectDelay;
+    console.log(`[wechat] Auto-reconnect attempt ${this.reconnectAttempt}/${MAX_RECONNECT_ATTEMPTS} in ${delay}ms`);
+
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
+      this.reconnectDelay = Math.min(this.reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
+      try {
+        await this.doStart();
+      } catch (err) {
+        console.error("[wechat] Reconnect attempt failed:", err);
+        if (!this.intentionalStop) {
+          this.scheduleReconnect();
+        }
+      }
+    }, delay);
+  }
+
+  private clearReconnectTimer(): void {
+    if (this.reconnectTimer !== null) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  // ── Message Handling ──────────────────────────────────────────────────
+
+  /**
+   * Force re-login: stop bot, clear stored credentials, restart with fresh QR code.
+   * User session mappings (Claude sessions) are preserved.
+   */
+  async relogin(): Promise<void> {
+    this.intentionalStop = true;
+    this.clearReconnectTimer();
+    this.running = false;
+    this.starting = false;
+
+    if (this.bot) {
+      try {
+        this.bot.stop();
+      } catch {
+        // ignore
+      }
+    }
+
+    // Clean up relay listeners
+    for (const [, cleanups] of this.sessionCleanups) {
+      for (const cleanup of cleanups) cleanup();
+    }
+    this.sessionCleanups.clear();
+
+    // Clear stored credentials via SDK storage
+    try {
+      if (this.bot?.storage) {
+        await this.bot.storage.clear();
+      }
+    } catch (err) {
+      console.error("[wechat] Failed to clear credentials:", err);
+    }
+
+    this.bot = null;
+    this.qrCodeData = null;
+    this.startError = null;
+    this.reconnectAttempt = 0;
+    this.reconnectDelay = MIN_RECONNECT_DELAY_MS;
+
+    // Fresh start — will show new QR code since credentials are cleared
+    await this.start();
   }
 
   // ── Message Handling ──────────────────────────────────────────────────
@@ -875,13 +972,14 @@ export class WeChatBridge {
 
   // ── Public API for routes ─────────────────────────────────────────────
 
-  getStatus(): { running: boolean; starting: boolean; error: string | null; connectedUsers: number; qrCode: string | null } {
+  getStatus(): { running: boolean; starting: boolean; error: string | null; connectedUsers: number; qrCode: string | null; reconnecting: boolean } {
     return {
       running: this.running,
       starting: this.starting,
       error: this.startError,
       connectedUsers: this.userSessions.size,
       qrCode: this.qrCodeData,
+      reconnecting: this.reconnectTimer !== null,
     };
   }
 
