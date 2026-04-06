@@ -608,17 +608,6 @@ export class WeChatBridge {
   private async cmdPermissionResponse(userId: string, behavior: "allow" | "deny"): Promise<void> {
     const userSession = this.userSessions.get(userId);
     if (!userSession?.pendingPermission) {
-      // Check if the active session has pending permissions that weren't forwarded
-      // (e.g. auto-approved safe tools)
-      const sessionId = this.getActiveSessionId(userId);
-      if (sessionId) {
-        const session = this.wsBridge.getSession(sessionId);
-        if (session && session.stateMachine.phase === "awaiting_permission" && session.pendingPermissions.size > 0) {
-          // There ARE pending permissions but they weren't forwarded to WeChat — forward now
-          this.handlePendingPermissions(sessionId, userId);
-          return;
-        }
-      }
       await this.sendReply(userId, "No pending permission request. Tool calls shown with ℹ️ are informational and don't need approval.");
       return;
     }
@@ -811,13 +800,12 @@ export class WeChatBridge {
     cleanups.push(unsubResult);
 
     // Permission requests — auto-approve safe, forward dangerous
-    const unsubPhase = companionBus.on("session:phase-changed", ({ sessionId: sid, to }) => {
+    // Listen on session:permission-request (fires before AI validation in ws-bridge)
+    const unsubPermReq = companionBus.on("session:permission-request", ({ sessionId: sid, request }) => {
       if (sid !== sessionId) return;
-      if (to === "awaiting_permission") {
-        this.handlePendingPermissions(sessionId, userId);
-      }
+      this.handlePermissionRequest(sessionId, userId, request);
     });
-    cleanups.push(unsubPhase);
+    cleanups.push(unsubPermReq);
 
     // Session exited
     const unsubExited = companionBus.on("session:exited", ({ sessionId: sid }) => {
@@ -840,30 +828,35 @@ export class WeChatBridge {
     this.sessionRelayData.delete(sessionId);
   }
 
-  private handlePendingPermissions(sessionId: string, userId: string): void {
-    const session = this.wsBridge.getSession(sessionId);
-    if (!session) return;
-
+  /**
+   * Handle a single permission request from the CLI.
+   * This fires for EVERY permission request, before AI validation in ws-bridge.
+   * The WeChat bridge gets first crack at handling permissions.
+   */
+  private handlePermissionRequest(
+    sessionId: string,
+    userId: string,
+    perm: { request_id: string; tool_name: string; input: Record<string, unknown>; description?: string },
+  ): void {
     const settings = getSettings();
     const userSession = this.userSessions.get(userId);
     if (!userSession) return;
 
-    for (const [requestId, perm] of session.pendingPermissions) {
-      if (settings.wechatAutoApproveSafe && !isDangerousTool(perm.tool_name, perm.input)) {
-        // Auto-approve safe tools
-        this.wsBridge.injectPermissionResponse(sessionId, requestId, "allow", perm.input);
-        const inputStr = JSON.stringify(perm.input).slice(0, 200);
-        this.sendReply(userId, `✅ Auto-approved (safe): ${perm.tool_name}${inputStr ? `\n${inputStr}` : ""}`).catch(() => {});
-      } else if (settings.wechatForwardDangerous) {
-        // Forward to WeChat for approval
-        userSession.pendingPermission = { requestId, sessionId };
-        const desc = perm.description ?? perm.tool_name;
-        const inputStr = JSON.stringify(perm.input).slice(0, 300);
-        this.sendReply(userId, `⚠️ Permission needed:\nTool: ${perm.tool_name}\n${desc ? `Description: ${desc}\n` : ""}Input: ${inputStr}\n\nSend /allow or /deny`).catch(() => {});
-      } else {
-        // Auto-approve everything (bypassPermissions mode)
-        this.wsBridge.injectPermissionResponse(sessionId, requestId, "allow", perm.input);
-      }
+    if (settings.wechatAutoApproveSafe && !isDangerousTool(perm.tool_name, perm.input)) {
+      // Auto-approve safe tools (Read, Glob, Grep, etc.)
+      // pendingPermissions is already set by ws-bridge before emitting the event
+      this.wsBridge.injectPermissionResponse(sessionId, perm.request_id, "allow", perm.input);
+      const inputStr = JSON.stringify(perm.input).slice(0, 200);
+      this.sendReply(userId, `✅ Auto-approved (safe): ${perm.tool_name}${inputStr ? `\n${inputStr}` : ""}`).catch(() => {});
+    } else if (settings.wechatForwardDangerous) {
+      // Forward to WeChat for approval — do NOT auto-approve
+      userSession.pendingPermission = { requestId: perm.request_id, sessionId };
+      const desc = perm.description ?? perm.tool_name;
+      const inputStr = JSON.stringify(perm.input).slice(0, 300);
+      this.sendReply(userId, `⚠️ Permission needed:\nTool: ${perm.tool_name}\n${desc ? `Description: ${desc}\n` : ""}Input: ${inputStr}\n\nSend /allow or /deny`).catch(() => {});
+    } else {
+      // Auto-approve everything (bypassPermissions mode)
+      this.wsBridge.injectPermissionResponse(sessionId, perm.request_id, "allow", perm.input);
     }
   }
 
