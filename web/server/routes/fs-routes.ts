@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { readdir, readFile, stat, writeFile, mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve, basename, sep } from "node:path";
+import { dirname, join, resolve, basename } from "node:path";
 import type { Hono } from "hono";
 
 /** Normalize a path to forward slashes for consistent cross-platform comparison. */

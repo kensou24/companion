@@ -641,8 +641,8 @@ describe("git-related routes", () => {
     it("returns empty diff gracefully for a non-git directory", async () => {
       // A file outside any git repo should return an empty diff (caught by try/catch).
       // Note: on some systems (e.g. Windows where a parent directory may contain .git),
-      // git may discover a parent repo, so we initialize a git repo and immediately break
-      // it by removing the .git directory to guarantee a truly non-git environment.
+      // git may discover a parent repo, so we try to isolate the directory by removing .git.
+      // If git still discovers a parent repo, the diff may be non-empty but must be a string.
       const nonGitDir = mkRealTempDir("fs-nogit-test-");
       const nonGitApp = new Hono();
       registerFsRoutes(nonGitApp, { allowedBases: [nonGitDir] });
@@ -657,10 +657,8 @@ describe("git-related routes", () => {
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      // When not in a git repo, diff should be empty (outer catch returns { diff: "" })
-      // On Windows, if a parent directory is a git repo, git may find it and produce a diff;
-      // in that case we still expect status 200 and a well-formed response.
-      expect(body).toHaveProperty("diff");
+      // Response must have a string diff — ideally empty, but on Windows a parent repo may
+      // cause git to return content. Either way, the endpoint must not crash.
       expect(typeof body.diff).toBe("string");
 
       rmSync(nonGitDir, { recursive: true, force: true });
@@ -781,8 +779,8 @@ describe("git-related routes", () => {
 
       expect(res.status).toBe(200);
       const body = await res.json();
-      // The response should always have a files array; it may or may not be empty
-      // depending on whether git discovers a parent repo, but it must be well-formed.
+      // The response should always have a files array; ideally empty for a non-git dir,
+      // but on Windows git may discover a parent repo and return its changed files.
       expect(Array.isArray(body.files)).toBe(true);
 
       rmSync(nonGitDir, { recursive: true, force: true });
@@ -1210,9 +1208,10 @@ describe("GET /fs/claude-config", () => {
 
     expect(res.status).toBe(200);
     const body = await res.json();
-    // If no git repo is found, root should be cwd. If git discovers a parent repo,
-    // root will be that parent — either way, the response must be well-formed.
+    // Root should be an absolute path — either cwd (no git) or git-detected parent repo.
     expect(body.project.root).toBeTruthy();
+    // Must be an absolute path (starts with / on Unix, drive letter on Windows)
+    expect(body.project.root).toMatch(/^(\/|[A-Za-z]:)/);
 
     rmSync(nonGitDir, { recursive: true, force: true });
   });
