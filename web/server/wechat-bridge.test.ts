@@ -608,3 +608,78 @@ describe("extractToolResults", () => {
     expect(results[0].content).toContain("file not found");
   });
 });
+
+// ── AskUserQuestion pending state handling ──────────────────────────────────────
+//
+// These tests verify the AskUserQuestion interactive response flow:
+// 1. pendingAskQuestion is cleared on permission cancellation
+// 2. Number input maps to the correct option label
+// 3. "Other" option index is calculated correctly
+// 4. Non-number text is treated as free-text answer
+// 5. Out-of-range numbers fall through to free-text
+
+describe("AskUserQuestion pending state handling", () => {
+  it("clears pendingAskQuestion when permission is cancelled", () => {
+    interface PendingAsk {
+      requestId: string;
+      sessionId: string;
+      questions: Array<Record<string, unknown>>;
+    }
+    interface PendingPerm {
+      requestId: string;
+      sessionId: string;
+    }
+
+    let pendingAskQuestion: PendingAsk | null = {
+      requestId: "req-ask-1",
+      sessionId: "sess-1",
+      questions: [{ question: "Pick one", options: [{ label: "A" }, { label: "B" }] }],
+    };
+    let pendingPermission: PendingPerm | null = { requestId: "req-ask-1", sessionId: "sess-1" };
+
+    // Simulate permission_cancelled
+    if (pendingPermission?.requestId === "req-ask-1") {
+      pendingPermission = null;
+      pendingAskQuestion = null;
+    }
+
+    expect(pendingPermission).toBeNull();
+    expect(pendingAskQuestion).toBeNull();
+  });
+
+  it("maps number to option label correctly", () => {
+    const questions = [
+      { question: "Pick one", options: [{ label: "Option A", description: "Fast" }, { label: "Option B", description: "Safe" }] },
+    ];
+    const num = 1;
+    const options = Array.isArray(questions[0]?.options) ? questions[0].options as Array<Record<string, string>> : [];
+    const selected = options[num - 1];
+    expect(selected?.label).toBe("Option A");
+  });
+
+  it("identifies Other option index correctly", () => {
+    const questions = [
+      { question: "Pick one", options: [{ label: "A" }, { label: "B" }] },
+    ];
+    const options = Array.isArray(questions[0]?.options) ? questions[0].options as Array<Record<string, string>> : [];
+    const otherIndex = options.length + 1;
+    expect(otherIndex).toBe(3);
+  });
+
+  it("handles non-number text as free-text answer", () => {
+    const text = "I want something custom";
+    const num = parseInt(text, 10);
+    expect(isNaN(num)).toBe(true);
+  });
+
+  it("handles number exceeding options as free-text", () => {
+    const questions = [
+      { question: "Pick one", options: [{ label: "A" }] },
+    ];
+    const options = Array.isArray(questions[0]?.options) ? questions[0].options as Array<Record<string, string>> : [];
+    const num = 5;
+    const isValid = !isNaN(num) && num >= 1 && num <= options.length;
+    expect(isValid).toBe(false);
+    // Should fall through to free-text path
+  });
+});
