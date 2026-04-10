@@ -441,9 +441,14 @@ export class WeChatBridge {
       }
     }
 
-    // Check for pending AskUserQuestion — number response selects option
+    // Parse commands BEFORE AskUserQuestion interceptor so /allow, /deny, /interrupt
+    // are not swallowed as free-text answers when both are pending concurrently.
+    const parsed = parseCommand(text.trim());
     const userSession = this.userSessions.get(userId);
-    if (userSession && userSession.pendingAskQuestions.size > 0) {
+
+    // Check for pending AskUserQuestion — number response selects option
+    // Only intercept plain text messages (not commands) when AskUserQuestion is pending
+    if (parsed.type === "message" && userSession && userSession.pendingAskQuestions.size > 0) {
       // FIFO: take the first pending AskUserQuestion
       const entry = userSession.pendingAskQuestions.entries().next().value!;
       const [askRequestId, pending] = entry;
@@ -481,8 +486,6 @@ export class WeChatBridge {
       }
       return;
     }
-
-    const parsed = parseCommand(text.trim());
 
     if (parsed.type === "message") {
       await this.handleUserMessage(userId, parsed.text);
@@ -1040,10 +1043,12 @@ export class WeChatBridge {
       const userSession = this.userSessions.get(userId);
       if (!userSession) return;
 
-      userSession.pendingPermissions.delete(requestId);
-      userSession.pendingAskQuestions.delete(requestId);
+      const wasInPerms = userSession.pendingPermissions.delete(requestId);
+      const wasInAsk = userSession.pendingAskQuestions.delete(requestId);
 
-      this.sendReply(userId, "Permission request was cancelled.");
+      if (wasInPerms || wasInAsk) {
+        this.sendReply(userId, "Permission request was cancelled.");
+      }
     });
     cleanups.push(unsubPermCancel);
 
@@ -1180,6 +1185,13 @@ export class WeChatBridge {
       } else if (userSession.activeSessionIndex >= userSession.sessionIds.length) {
         userSession.activeSessionIndex = userSession.sessionIds.length - 1;
       }
+    }
+    // Purge orphaned permission/AskUserQuestion entries referencing the removed session
+    for (const [key, val] of userSession.pendingPermissions) {
+      if (val.sessionId === sessionId) userSession.pendingPermissions.delete(key);
+    }
+    for (const [key, val] of userSession.pendingAskQuestions) {
+      if (val.sessionId === sessionId) userSession.pendingAskQuestions.delete(key);
     }
     this.persistSessionMappings();
   }
