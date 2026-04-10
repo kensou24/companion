@@ -25,6 +25,8 @@ interface WeChatUserSession {
     requestId: string;
     sessionId: string;
     questions: Array<Record<string, unknown>>;
+    currentIndex: number;
+    answers: Record<string, string>;
   } | null;
 }
 
@@ -80,6 +82,41 @@ export function parseCommand(text: string): ParsedCommand {
   const command = (parts[0] ?? "").toLowerCase();
   const args = parts.slice(1).join(" ");
   return { type: "command", command, args };
+}
+
+/** Format a single question from an AskUserQuestion input for WeChat display. */
+export function formatSingleQuestion(questions: Array<Record<string, unknown>>, index: number): string {
+  const q = questions[index];
+  if (!q) return "";
+
+  const parts: string[] = [];
+  const questionText = String(q.question ?? "");
+  if (questions.length > 1) {
+    parts.push(`❓ [${index + 1}/${questions.length}] ${questionText}`);
+  } else {
+    parts.push(`❓ ${questionText}`);
+  }
+  parts.push("");
+
+  const options = Array.isArray(q.options) ? q.options as Array<Record<string, string>> : [];
+  let num = 1;
+  for (const opt of options) {
+    const label = String(opt.label ?? "");
+    const desc = String(opt.description ?? "");
+    if (desc) {
+      parts.push(`${num}. ${label}`);
+      parts.push(`   ${desc}`);
+    } else {
+      parts.push(`${num}. ${label}`);
+    }
+    num++;
+  }
+  parts.push(`${num}. 其他`);
+  parts.push("   输入自定义回答");
+
+  parts.push("");
+  parts.push("回复序号选择 (如: 1)");
+  return parts.join("\n");
 }
 
 /** Check if a tool use is considered dangerous.
@@ -401,8 +438,7 @@ export class WeChatBridge {
     if (userSession?.pendingAskQuestion) {
       const pending = userSession.pendingAskQuestion;
       const num = parseInt(text.trim(), 10);
-      const questions = pending.questions;
-      const q = questions[0];
+      const q = pending.questions[pending.currentIndex];
       const options = Array.isArray(q?.options) ? q.options as Array<Record<string, string>> : [];
 
       let selectedLabel: string;
@@ -414,13 +450,24 @@ export class WeChatBridge {
         selectedLabel = text.trim();
       }
 
-      userSession.pendingAskQuestion = null;
-      userSession.pendingPermission = null;
-      this.wsBridge.injectPermissionResponse(pending.sessionId, pending.requestId, "allow", {
-        questions,
-        answers: { "0": selectedLabel },
-      });
+      pending.answers[String(pending.currentIndex)] = selectedLabel;
       await this.sendReply(userId, `✅ 已选择: ${selectedLabel}`);
+
+      // Advance to next question or submit all answers
+      const nextIndex = pending.currentIndex + 1;
+      if (nextIndex < pending.questions.length) {
+        // More questions — show the next one
+        pending.currentIndex = nextIndex;
+        this.sendReply(userId, formatSingleQuestion(pending.questions, nextIndex));
+      } else {
+        // All questions answered — submit
+        userSession.pendingAskQuestion = null;
+        userSession.pendingPermission = null;
+        this.wsBridge.injectPermissionResponse(pending.sessionId, pending.requestId, "allow", {
+          questions: pending.questions,
+          answers: pending.answers,
+        });
+      }
       return;
     }
 
@@ -1035,10 +1082,12 @@ export class WeChatBridge {
         requestId: perm.request_id,
         sessionId,
         questions,
+        currentIndex: 0,
+        answers: {},
       };
       userSession.pendingPermission = { requestId: perm.request_id, sessionId };
-      const formatted = formatAskUserQuestion(perm.input);
-      this.sendReply(userId, formatted);
+      // Show only the first question (subsequent ones shown after each answer)
+      this.sendReply(userId, formatSingleQuestion(questions, 0));
       return;
     }
 
