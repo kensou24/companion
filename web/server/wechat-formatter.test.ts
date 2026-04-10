@@ -82,6 +82,25 @@ describe("formatToolCall", () => {
     const result = formatToolCall("mcp__context7__resolve-library-id", { query: "react" });
     expect(result).toContain("mcp__context7__resolve-library-id");
   });
+
+  // Regression: extractToolUses used to truncate JSON.stringify(input) to 200 chars,
+  // which cut off file_path when content was large. Now input is passed as object.
+  it("formats Write tool with large content — file_path still visible", () => {
+    const result = formatToolCall("Write", {
+      file_path: "src/components/VeryLongComponentName.tsx",
+      content: "x".repeat(5000),
+    });
+    expect(result).toBe("✏️ 写入: src/components/VeryLongComponentName.tsx");
+  });
+
+  it("formats Edit tool with large old_string — file_path still visible", () => {
+    const result = formatToolCall("Edit", {
+      file_path: "package.json",
+      old_string: "x".repeat(5000),
+      new_string: "y".repeat(5000),
+    });
+    expect(result).toBe("📝 编辑: package.json");
+  });
 });
 
 // ── formatPermissionRequest ────────────────────────────────────────────────

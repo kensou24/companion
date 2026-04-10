@@ -112,7 +112,7 @@ function extractTextDeltaFromStreamEvent(msg: BrowserIncomingMessage): string {
 }
 
 /** Extract tool use blocks from assistant message */
-function extractToolUses(msg: BrowserIncomingMessage): Array<{ name: string; input: string; id?: string }> {
+function extractToolUses(msg: BrowserIncomingMessage): Array<{ name: string; input: Record<string, unknown>; id?: string }> {
   if (msg.type !== "assistant") return [];
   const raw = msg as Record<string, unknown>;
   const message = raw.message;
@@ -126,7 +126,7 @@ function extractToolUses(msg: BrowserIncomingMessage): Array<{ name: string; inp
       && typeof (b as Record<string, unknown>).name === "string")
     .map((toolBlock) => ({
       name: toolBlock.name,
-      input: toolBlock.input ? JSON.stringify(toolBlock.input).slice(0, 200) : "",
+      input: toolBlock.input ?? {},
       id: (toolBlock as Record<string, unknown>).id as string | undefined,
     }));
 }
@@ -839,10 +839,7 @@ export class WeChatBridge {
         const verboseMode = userSession?.verboseMode ?? false;
         for (const t of tools) {
           // Parse input safely for accumulator and display
-          let parsedInput: Record<string, unknown> = {};
-          try {
-            parsedInput = JSON.parse(t.input || "{}");
-          } catch { /* use empty object */ }
+          const parsedInput = t.input;
 
           if (relayData) {
             relayData.toolAccumulator.push({ name: t.name, input: parsedInput, toolUseId: t.id });
