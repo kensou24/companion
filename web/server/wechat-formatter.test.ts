@@ -1,7 +1,7 @@
 // Tests for wechat-formatter.ts — tool call display, permission formatting,
 // Markdown conversion, WeChat message splitting, and turn-level tool summaries.
 import { describe, it, expect } from "vitest";
-import { formatToolCall, formatPermissionRequest, formatMarkdown, splitForWeChat, formatToolSummary, formatToolCallFailure } from "./wechat-formatter.js";
+import { formatToolCall, formatPermissionRequest, formatMarkdown, splitForWeChat, formatToolSummary, formatToolCallFailure, formatAskUserQuestion } from "./wechat-formatter.js";
 
 // ── formatToolCall ─────────────────────────────────────────────────────────
 
@@ -417,5 +417,76 @@ describe("formatToolCallFailure", () => {
   it("handles empty content", () => {
     const result = formatToolCallFailure("Bash", "");
     expect(result).toBe("❌ 失败: Bash\n");
+  });
+});
+
+// ── formatAskUserQuestion ──────────────────────────────────────────────────
+
+describe("formatAskUserQuestion", () => {
+  it("formats single question with options", () => {
+    const input = {
+      questions: [
+        {
+          question: "Which approach?",
+          header: "Approach",
+          options: [
+            { label: "Option A", description: "Faster" },
+            { label: "Option B", description: "Safer" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+    const result = formatAskUserQuestion(input);
+    expect(result).toContain("❓ Which approach?");
+    expect(result).toContain("1. Option A");
+    expect(result).toContain("   Faster");
+    expect(result).toContain("2. Option B");
+    expect(result).toContain("   Safer");
+    expect(result).toContain("回复序号选择");
+  });
+
+  it("formats question without descriptions", () => {
+    const input = {
+      questions: [
+        {
+          question: "Confirm?",
+          header: "Confirm",
+          options: [
+            { label: "Yes", description: "" },
+            { label: "No", description: "" },
+          ],
+          multiSelect: false,
+        },
+      ],
+    };
+    const result = formatAskUserQuestion(input);
+    expect(result).toContain("1. Yes");
+    expect(result).toContain("2. No");
+  });
+
+  it("handles empty questions gracefully", () => {
+    const result = formatAskUserQuestion({ questions: [] });
+    expect(result).toBe("");
+  });
+
+  it("handles missing questions field", () => {
+    const result = formatAskUserQuestion({});
+    expect(result).toBe("");
+  });
+
+  it("includes Other option for free-text answers", () => {
+    const input = {
+      questions: [
+        {
+          question: "Pick one",
+          header: "Choice",
+          options: [{ label: "A", description: "desc" }],
+          multiSelect: false,
+        },
+      ],
+    };
+    const result = formatAskUserQuestion(input);
+    expect(result).toMatch(/\d+\.\s+其他/);
   });
 });
