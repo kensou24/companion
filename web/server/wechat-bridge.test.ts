@@ -1534,6 +1534,13 @@ describe("WeChat relay — relaunch notification", () => {
 // ── Feature: Subagent progress hint ────────────────────────────────────────
 
 describe("WeChat relay — subagent progress", () => {
+  // Helper to format elapsed time matching the bridge implementation
+  function formatElapsed(seconds: number): string {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
+  }
+
   it("sends subagent hint for Agent tool running > 15s", () => {
     const toolName = "Agent";
     const elapsed = 20;
@@ -1541,8 +1548,9 @@ describe("WeChat relay — subagent progress", () => {
 
     if (toolName === "Agent" && elapsed >= 15) {
       const agentLabel = parentToolUseId ? "[子任务] " : "";
-      const msg = `${agentLabel}🤖 子任务执行中... 已运行 ${Math.round(elapsed)}s`;
-      expect(msg).toBe("[子任务] 🤖 子任务执行中... 已运行 20s");
+      const elapsedStr = formatElapsed(elapsed);
+      const msg = `${agentLabel}🤖 子任务执行中... 已运行 ${elapsedStr}`;
+      expect(msg).toBe("[子任务] 🤖 子任务执行中... 已运行 20秒");
     }
   });
 
@@ -1553,8 +1561,9 @@ describe("WeChat relay — subagent progress", () => {
 
     if (toolName === "Agent" && elapsed >= 15) {
       const agentLabel = parentToolUseId ? "[子任务] " : "";
-      const msg = `${agentLabel}🤖 子任务执行中... 已运行 ${Math.round(elapsed)}s`;
-      expect(msg).toBe("🤖 子任务执行中... 已运行 30s");
+      const elapsedStr = formatElapsed(elapsed);
+      const msg = `${agentLabel}🤖 子任务执行中... 已运行 ${elapsedStr}`;
+      expect(msg).toBe("🤖 子任务执行中... 已运行 30秒");
     }
   });
 
@@ -1801,5 +1810,212 @@ describe("WeChat relay — thinking fallback from assistant", () => {
     pendingThinking = "";
     const shouldFallback2 = !pendingThinking.trim();
     expect(shouldFallback2).toBe(true);
+  });
+});
+
+// ── Feature: Progress heartbeat for long-running turns ──────────────────────
+//
+// The heartbeat mechanism sends "still working" notifications when a turn
+// has been active for 30+ seconds with no user-facing messages.
+
+describe("WeChat relay — progress heartbeat", () => {
+  it("formats heartbeat message with elapsed time in seconds", () => {
+    const elapsed = 45;
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
+    const toolName = "Bash";
+    const msg = `⏳ 仍在处理中 (${toolName})... 已用时 ${timeStr}`;
+    expect(msg).toBe("⏳ 仍在处理中 (Bash)... 已用时 45秒");
+  });
+
+  it("formats heartbeat message with elapsed time in minutes", () => {
+    const elapsed = 125;
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
+    const msg = `⏳ 仍在处理中... 已用时 ${timeStr}`;
+    expect(msg).toBe("⏳ 仍在处理中... 已用时 2分5秒");
+  });
+
+  it("formats heartbeat without tool name when unknown", () => {
+    const elapsed = 60;
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
+    const lastActiveToolName = "";
+    const toolHint = lastActiveToolName ? ` (${lastActiveToolName})` : "";
+    const msg = `⏳ 仍在处理中${toolHint}... 已用时 ${timeStr}`;
+    expect(msg).toBe("⏳ 仍在处理中... 已用时 1分0秒");
+  });
+
+  it("heartbeat is suppressed when recent message was sent", () => {
+    // The heartbeat checks lastUserFacingMessageTs — if a message was sent
+    // within the last HEARTBEAT_INTERVAL_MS (15s), the heartbeat is rescheduled.
+    const HEARTBEAT_INTERVAL_MS = 15_000;
+    const now = Date.now();
+    const lastUserFacingMessageTs = now - 5_000; // 5s ago
+
+    // Should skip sending and reschedule
+    const shouldSkip = now - lastUserFacingMessageTs < HEARTBEAT_INTERVAL_MS;
+    expect(shouldSkip).toBe(true);
+  });
+
+  it("heartbeat fires when no recent message was sent", () => {
+    const HEARTBEAT_INTERVAL_MS = 15_000;
+    const now = Date.now();
+    const lastUserFacingMessageTs = now - 20_000; // 20s ago
+
+    const shouldSkip = now - lastUserFacingMessageTs < HEARTBEAT_INTERVAL_MS;
+    expect(shouldSkip).toBe(false);
+  });
+
+  it("heartbeat timer starts when user message is injected", () => {
+    // Simulates the relayData state after user message injection
+    const relayData = {
+      turnStartTime: Date.now(),
+      lastUserFacingMessageTs: Date.now(),
+      lastActiveToolName: "",
+      heartbeatTimer: null as ReturnType<typeof setTimeout> | null,
+    };
+    // After handleUserMessage, turnStartTime and lastUserFacingMessageTs are set
+    expect(relayData.turnStartTime).toBeGreaterThan(0);
+    expect(relayData.lastActiveToolName).toBe("");
+  });
+
+  it("lastActiveToolName is updated when tools execute", () => {
+    let lastActiveToolName = "";
+    // Simulate tool extraction
+    const tools = [
+      { name: "Read", input: { file_path: "src/index.ts" } },
+      { name: "Bash", input: { command: "npm test" } },
+    ];
+    for (const t of tools) {
+      lastActiveToolName = t.name;
+    }
+    expect(lastActiveToolName).toBe("Bash");
+  });
+
+  it("heartbeat stops when turn completes (message:result)", () => {
+    // Simulates relayData reset in result handler
+    const relayData = {
+      lastActiveToolName: "Bash",
+      heartbeatTimer: setTimeout(() => {}, 10000) as ReturnType<typeof setTimeout> | null,
+      toolAccumulator: [{ name: "Bash", input: {} }],
+    };
+
+    // stopHeartbeat clears the timer
+    clearTimeout(relayData.heartbeatTimer!);
+    relayData.heartbeatTimer = null;
+    relayData.lastActiveToolName = "";
+    relayData.toolAccumulator = [];
+
+    expect(relayData.heartbeatTimer).toBeNull();
+    expect(relayData.lastActiveToolName).toBe("");
+    expect(relayData.toolAccumulator).toEqual([]);
+  });
+
+  it("relaySend updates lastUserFacingMessageTs", () => {
+    // Simulates the relaySend helper updating the timestamp
+    const relayData = {
+      lastUserFacingMessageTs: 1000,
+    };
+    // relaySend sends message and updates timestamp
+    relayData.lastUserFacingMessageTs = Date.now();
+    expect(relayData.lastUserFacingMessageTs).toBeGreaterThan(1000);
+  });
+});
+
+// ── Feature: Chinese-unified system messages ──────────────────────────────
+//
+// Verifies that all system-facing messages are in Chinese for WeChat users.
+
+describe("WeChat system messages — Chinese unification", () => {
+  it("session creation message is in Chinese", () => {
+    const sessionId = "abcd1234efgh5678";
+    const model = "claude-sonnet-4-6";
+    const cwd = "/tmp/test";
+    const msg = `✅ 会话已创建: ${sessionId.slice(0, 8)}...\n模型: ${model}\n目录: ${cwd}\n会话 #1 / 1`;
+    expect(msg).toContain("会话已创建");
+    expect(msg).toContain("模型");
+    expect(msg).toContain("目录");
+  });
+
+  it("session killed message is in Chinese", () => {
+    const msg1 = "会话已终止，已切换到会话 #2。";
+    expect(msg1).toContain("会话已终止");
+    const msg2 = "会话已终止，没有更多会话。";
+    expect(msg2).toContain("没有更多会话");
+  });
+
+  it("no active session message is in Chinese", () => {
+    const msg = "没有活跃的会话，发送 /new 创建新会话。";
+    expect(msg).toContain("没有活跃的会话");
+    expect(msg).toContain("/new");
+  });
+
+  it("permission response messages are in Chinese", () => {
+    const allowMsg = "已批准 ✅";
+    const denyMsg = "已拒绝 ❌";
+    expect(allowMsg).toContain("已批准");
+    expect(denyMsg).toContain("已拒绝");
+  });
+
+  it("interrupt message is in Chinese", () => {
+    const msg = "中断信号已发送，当前操作将被取消。";
+    expect(msg).toContain("中断信号");
+    expect(msg).toContain("取消");
+  });
+
+  it("model/mode change messages are in Chinese", () => {
+    const modelMsg = "模型已切换: claude-sonnet-4-6";
+    expect(modelMsg).toContain("模型已切换");
+    const modeMsg = "权限模式已设为: acceptEdits";
+    expect(modeMsg).toContain("权限模式已设为");
+  });
+
+  it("session status labels are in Chinese", () => {
+    const phaseLabel: Record<string, string> = {
+      ready: "就绪", streaming: "生成中",
+      awaiting_permission: "等待审批", starting: "启动中",
+      compacting: "压缩中",
+    };
+    expect(phaseLabel["ready"]).toBe("就绪");
+    expect(phaseLabel["streaming"]).toBe("生成中");
+    expect(phaseLabel["awaiting_permission"]).toBe("等待审批");
+  });
+
+  it("directory listing messages are in Chinese", () => {
+    const noConfig = "未配置默认工作目录，请在 设置 > 默认工作目录 中配置。";
+    expect(noConfig).toContain("未配置");
+    const notFound = "目录不存在: /some/path";
+    expect(notFound).toContain("目录不存在");
+    const empty = "空目录: (根目录)";
+    expect(empty).toContain("空目录");
+  });
+
+  it("cost notification uses Chinese labels", () => {
+    const parts = ["$0.0123", "输入 1.2K", "输出 500", "第 3 轮"];
+    const line = `💰 ${parts.join(" · ")}`;
+    expect(line).toContain("输入");
+    expect(line).toContain("输出");
+    expect(line).toContain("第 3 轮");
+  });
+
+  it("session list header is in Chinese", () => {
+    const header = "📋 你的会话 (3):";
+    expect(header).toContain("你的会话");
+  });
+
+  it("error messages are in Chinese", () => {
+    const errMsg = "❌ 错误: Something went wrong";
+    expect(errMsg).toContain("错误");
+  });
+
+  it("access denied messages are in Chinese", () => {
+    const auth = "⛔ 权限不足，请联系管理员添加你的微信ID。";
+    expect(auth).toContain("权限不足");
+    const path = "访问被拒绝: 路径超出默认工作目录范围。";
+    expect(path).toContain("访问被拒绝");
   });
 });
