@@ -1582,14 +1582,17 @@ export class WeChatBridge {
       agent_id?: string;
     },
   ): void {
+    const agentLabel = perm.agent_id ? "[子任务] " : "";
+    const context = `permission request ${perm.request_id.slice(0, 8)} (${perm.tool_name}${perm.agent_id ? ", subagent" : ""})`;
+
     const settings = getSettings();
     const userSession = this.userSessions.get(userId);
     if (!userSession) {
-      console.warn(`[wechat] No userSession for userId=${userId}, sessionId=${sessionId} — permission request from ${perm.agent_id ? "subagent" : "main"} dropped: ${perm.tool_name}`);
+      console.warn(`[wechat] No userSession for userId=${userId}, sessionId=${sessionId} — ${context} dropped`);
       return;
     }
 
-    const agentLabel = perm.agent_id ? "[子任务] " : "";
+    console.log(`[wechat] Handling ${context} for session ${sessionId.slice(0, 8)}`);
 
     // AskUserQuestion: track in both Maps, show first question
     if (perm.tool_name === "AskUserQuestion") {
@@ -1610,7 +1613,7 @@ export class WeChatBridge {
         isAskUserQuestion: true,
         createdAt: Date.now(),
       });
-      this.sendReply(userId, `${agentLabel}${formatSingleQuestion(questions, 0)}`);
+      this.sendCriticalReply(userId, `${agentLabel}${formatSingleQuestion(questions, 0)}`, `AskUserQuestion ${perm.request_id.slice(0, 8)}`).catch(() => {});
       return;
     }
 
@@ -1619,7 +1622,7 @@ export class WeChatBridge {
       // pendingPermissions is already set by ws-bridge before emitting the event
       this.wsBridge.injectPermissionResponse(sessionId, perm.request_id, "allow", perm.input);
       const formatted = formatToolCall(perm.tool_name, perm.input);
-      this.sendReply(userId, formatted ? `✅ 自动批准: ${agentLabel}${formatted}` : `✅ 自动批准: ${agentLabel}${perm.tool_name}`);
+      this.sendCriticalReply(userId, formatted ? `✅ 自动批准: ${agentLabel}${formatted}` : `✅ 自动批准: ${agentLabel}${perm.tool_name}`, `auto-approve ${perm.tool_name}`).catch(() => {});
     } else if (settings.wechatForwardDangerous) {
       // Forward to WeChat for approval — do NOT auto-approve
       userSession.pendingPermissions.set(perm.request_id, {
@@ -1630,7 +1633,7 @@ export class WeChatBridge {
         isAskUserQuestion: false,
         createdAt: Date.now(),
       });
-      this.sendReply(userId, `${agentLabel}${formatPermissionRequest(perm.tool_name, perm.input, perm.description)}`);
+      this.sendCriticalReply(userId, `${agentLabel}${formatPermissionRequest(perm.tool_name, perm.input, perm.description)}`, `dangerous permission ${perm.tool_name}`).catch(() => {});
     } else {
       // Auto-approve everything (bypassPermissions mode)
       this.wsBridge.injectPermissionResponse(sessionId, perm.request_id, "allow", perm.input);
@@ -1744,6 +1747,39 @@ export class WeChatBridge {
       this.sendQueue.push({ userId, text: chunk });
     }
     this.drainSendQueue();
+  }
+
+  /**
+   * Send a critical message (permission request, ask-question) directly,
+   * bypassing the normal FIFO queue. Uses higher retry count and explicit
+   * error logging. Returns true if sent successfully.
+   */
+  private async sendCriticalReply(userId: string, text: string, context: string): Promise<boolean> {
+    if (!this.bot?.isRunning) {
+      console.error(`[wechat] CRITICAL: Bot not running, cannot deliver ${context}`);
+      return false;
+    }
+    const chunks = splitForWeChat(text);
+    for (const chunk of chunks) {
+      const maxRetries = 5;
+      let sent = false;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          await this.bot.send(userId, chunk);
+          sent = true;
+          break;
+        } catch (err) {
+          if (attempt < maxRetries) {
+            console.warn(`[wechat] Critical send failed (${context}, attempt ${attempt + 1}/${maxRetries + 1}), retrying...`, err);
+            await new Promise((r) => setTimeout(r, 1_000 * (attempt + 1)));
+          } else {
+            console.error(`[wechat] CRITICAL: Failed to deliver ${context} after ${maxRetries + 1} attempts`, err);
+          }
+        }
+      }
+      if (!sent) return false;
+    }
+    return true;
   }
 
   /** Process the send queue one message at a time. */
