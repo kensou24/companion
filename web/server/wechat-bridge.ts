@@ -1011,7 +1011,7 @@ export class WeChatBridge {
 
     // Helper: send a reply and update the heartbeat tracker
     const relaySend = (text: string) => {
-      relaySend(text);
+      this.sendReply(userId, text);
       const rd = this.sessionRelayData.get(sessionId);
       if (rd) rd.lastUserFacingMessageTs = Date.now();
     };
