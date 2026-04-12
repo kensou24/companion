@@ -78,6 +78,8 @@ const HELP_TEXT = `Companion WeChat Bot Commands:
 /mode <mode> — 设置权限模式 / Set permission mode
 /allow (或 /y) — 批准权限请求 / Approve pending permission
 /deny (或 /n) — 拒绝权限请求 / Deny pending permission
+/pick <n> — 选择问题选项 / Pick option #n for pending question
+/pick <text> — 自定义回答 / Free-text answer for pending question
 /interrupt — 中断当前操作 / Cancel current operation
 /status — 查看会话状态 / Show session status
 /dir [path] — 浏览目录 / List folders in default directory
@@ -137,10 +139,10 @@ export function formatSingleQuestion(questions: Array<Record<string, unknown>>, 
     num++;
   }
   parts.push(`${num}. 其他`);
-  parts.push("   输入自定义回答");
+  parts.push("   输入 /pick <自定义回答>");
 
   parts.push("");
-  parts.push("回复序号选择 (如: 1)");
+  parts.push("回复序号选择 (如: 1) 或 /pick <自定义回答>");
   return parts.join("\n");
 }
 
@@ -307,8 +309,16 @@ export class WeChatBridge {
   // Send queue: serializes all bot.send() calls so concurrent fire-and-forget
   // sends (tool notifications + result text) don't overwhelm the WeChat SDK
   // and silently drop the last message.
-  private sendQueue: Array<{ userId: string; text: string }> = [];
+  // Critical messages (permission requests, AskUserQuestion) use priority=true
+  // to jump to the front of the queue, ensuring they are delivered before
+  // ordinary tool notifications and result text.
+  private sendQueue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (result: "ok" | "failed") => void }> = [];
   private sending = false;
+  // Critical message retry queue: messages that could not be delivered because
+  // the bot was down. Flushed on bot reconnect. Prevents permission/AskUserQuestion
+  // messages from being permanently lost during bot disconnections.
+  private criticalPending: Array<{ userId: string; text: string; context: string }> = [];
+  private criticalRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(wsBridge: WsBridge, orchestrator: SessionOrchestrator) {
     this.wsBridge = wsBridge;
@@ -386,11 +396,16 @@ export class WeChatBridge {
     this.reconnectAttempt = 0;
     this.qrCodeData = null;
     console.log("[wechat] Bot started and connected");
+    // Flush any critical messages that were queued while bot was down
+    this.flushCriticalPending();
+    // Also drain the normal send queue in case messages accumulated
+    this.drainSendQueue();
   }
 
   stop(): void {
     this.intentionalStop = true;
     this.clearReconnectTimer();
+    this.clearCriticalRetryTimer();
     if (!this.bot) return;
     try {
       this.bot.stop();
@@ -516,45 +531,19 @@ export class WeChatBridge {
     const parsed = parseCommand(text.trim());
     const userSession = this.userSessions.get(userId);
 
-    // Check for pending AskUserQuestion — number response selects option
-    // Only intercept plain text messages (not commands) when AskUserQuestion is pending
+    // Check for pending AskUserQuestion — only intercept pure numeric responses
+    // that match option counts. Non-numeric text passes through as normal messages
+    // to prevent accidental free-text answers from consuming the question.
+    // Users can also use /pick <number> or /pick <text> to explicitly answer.
     if (parsed.type === "message" && userSession && userSession.pendingAskQuestions.size > 0) {
-      // FIFO: take the first pending AskUserQuestion
-      const entry = userSession.pendingAskQuestions.entries().next().value!;
-      const [askRequestId, pending] = entry;
-      const num = parseInt(text.trim(), 10);
-      const q = pending.questions[pending.currentIndex];
-      const options = Array.isArray(q?.options) ? q.options as Array<Record<string, string>> : [];
-
-      let selectedLabel: string;
-      if (!isNaN(num) && num >= 1 && num <= options.length) {
-        // Valid option number
-        selectedLabel = options[num - 1].label;
-      } else {
-        // "Other" or any free-text — use the user's text
-        selectedLabel = text.trim();
+      const trimmed = text.trim();
+      const num = parseInt(trimmed, 10);
+      // Only intercept if it's a pure numeric string matching an option
+      if (trimmed === String(num) && num >= 1) {
+        const handled = await this.tryAnswerAskUserQuestion(userId, userSession, num);
+        if (handled) return;
       }
-
-      pending.answers[String(pending.currentIndex)] = selectedLabel;
-      const agentLabel = pending.agentId ? "[子任务] " : "";
-      await this.sendReply(userId, `✅ ${agentLabel}已选择: ${selectedLabel}`);
-
-      // Advance to next question or submit all answers
-      const nextIndex = pending.currentIndex + 1;
-      if (nextIndex < pending.questions.length) {
-        // More questions — show the next one
-        pending.currentIndex = nextIndex;
-        this.sendReply(userId, `${agentLabel}${formatSingleQuestion(pending.questions, nextIndex)}`);
-      } else {
-        // All questions answered — submit
-        userSession.pendingAskQuestions.delete(askRequestId);
-        userSession.pendingPermissions.delete(askRequestId);
-        this.wsBridge.injectPermissionResponse(pending.sessionId, askRequestId, "allow", {
-          questions: pending.questions,
-          answers: pending.answers,
-        });
-      }
-      return;
+      // Non-numeric text falls through to normal message handling
     }
 
     if (parsed.type === "message") {
@@ -627,6 +616,9 @@ export class WeChatBridge {
       case "deny":
       case "n":
         await this.cmdPermissionResponse(userId, "deny");
+        break;
+      case "pick":
+        await this.cmdPick(userId, args);
         break;
       case "interrupt":
         await this.cmdInterrupt(userId);
@@ -859,14 +851,96 @@ export class WeChatBridge {
       return;
     }
 
-    // FIFO: resolve the oldest pending permission
-    const entry = userSession.pendingPermissions.entries().next().value!;
-    const [requestId, pending] = entry;
-    userSession.pendingPermissions.delete(requestId);
+    // FIFO: resolve the oldest pending permission, skipping cancelled ones
+    while (userSession.pendingPermissions.size > 0) {
+      const entry = userSession.pendingPermissions.entries().next().value!;
+      const [requestId, pending] = entry;
+      userSession.pendingPermissions.delete(requestId);
 
-    this.wsBridge.injectPermissionResponse(pending.sessionId, requestId, behavior);
+      // P2: Check if the request still exists in ws-bridge (may have been cancelled)
+      const session = this.wsBridge.getSession(pending.sessionId);
+      if (!session || !session.pendingPermissions.has(requestId)) {
+        // Already cancelled — skip and try next
+        userSession.pendingAskQuestions.delete(requestId);
+        await this.sendReply(userId, "⚠️ 该权限请求已被系统取消。");
+        continue;
+      }
+
+      this.wsBridge.injectPermissionResponse(pending.sessionId, requestId, behavior);
+      const agentLabel = pending.agentId ? "[子任务] " : "";
+      await this.sendReply(userId, `${agentLabel}${behavior === "allow" ? "已批准 ✅" : "已拒绝 ❌"}`);
+      return;
+    }
+
+    await this.sendReply(userId, "所有待审批请求已被系统取消。");
+  }
+
+  /** Answer a pending AskUserQuestion with an explicit option number or free-text.
+   *  Usage: /pick 1  (select option 1)  or  /pick my custom answer */
+  private async cmdPick(userId: string, args: string): Promise<void> {
+    const userSession = this.userSessions.get(userId);
+    if (!userSession || userSession.pendingAskQuestions.size === 0) {
+      await this.sendReply(userId, "没有待回答的问题。");
+      return;
+    }
+
+    const trimmed = args.trim();
+    if (!trimmed) {
+      await this.sendReply(userId, "用法: /pick <序号或自定义回答>\n示例: /pick 1 或 /pick 使用React框架");
+      return;
+    }
+
+    const num = parseInt(trimmed, 10);
+    if (!isNaN(num) && trimmed === String(num)) {
+      // Numeric answer
+      const handled = await this.tryAnswerAskUserQuestion(userId, userSession, num);
+      if (!handled) {
+        await this.sendReply(userId, "无效的选项编号。");
+      }
+    } else {
+      // Free-text answer
+      await this.submitAskUserAnswer(userId, userSession, trimmed);
+    }
+  }
+
+  /** Try to answer the first pending AskUserQuestion with a numeric option.
+   *  Returns true if the question was answered, false if the number was out of range. */
+  private async tryAnswerAskUserQuestion(userId: string, userSession: WeChatUserSession, num: number): Promise<boolean> {
+    const entry = userSession.pendingAskQuestions.entries().next().value;
+    if (!entry) return false;
+    const [askRequestId, pending] = entry;
+    const q = pending.questions[pending.currentIndex];
+    const options = Array.isArray(q?.options) ? q.options as Array<Record<string, string>> : [];
+
+    if (num < 1 || num > options.length) return false;
+
+    const selectedLabel = options[num - 1].label;
+    await this.submitAskUserAnswer(userId, userSession, selectedLabel);
+    return true;
+  }
+
+  /** Submit an answer (option label or free-text) to the first pending AskUserQuestion. */
+  private async submitAskUserAnswer(userId: string, userSession: WeChatUserSession, selectedLabel: string): Promise<void> {
+    const entry = userSession.pendingAskQuestions.entries().next().value;
+    if (!entry) return;
+    const [askRequestId, pending] = entry;
+
+    pending.answers[String(pending.currentIndex)] = selectedLabel;
     const agentLabel = pending.agentId ? "[子任务] " : "";
-    await this.sendReply(userId, `${agentLabel}${behavior === "allow" ? "已批准 ✅" : "已拒绝 ❌"}`);
+    await this.sendReply(userId, `✅ ${agentLabel}已选择: ${selectedLabel}`);
+
+    const nextIndex = pending.currentIndex + 1;
+    if (nextIndex < pending.questions.length) {
+      pending.currentIndex = nextIndex;
+      this.sendReply(userId, `${agentLabel}${formatSingleQuestion(pending.questions, nextIndex)}`);
+    } else {
+      userSession.pendingAskQuestions.delete(askRequestId);
+      userSession.pendingPermissions.delete(askRequestId);
+      this.wsBridge.injectPermissionResponse(pending.sessionId, askRequestId, "allow", {
+        questions: pending.questions,
+        answers: pending.answers,
+      });
+    }
   }
 
   private async cmdInterrupt(userId: string): Promise<void> {
@@ -1571,7 +1645,7 @@ export class WeChatBridge {
    * This fires for EVERY permission request, before AI validation in ws-bridge.
    * The WeChat bridge gets first crack at handling permissions.
    */
-  private handlePermissionRequest(
+  private async handlePermissionRequest(
     sessionId: string,
     userId: string,
     perm: {
@@ -1581,10 +1655,9 @@ export class WeChatBridge {
       description?: string;
       agent_id?: string;
     },
-  ): void {
+  ): Promise<void> {
     const agentLabel = perm.agent_id ? "[子任务] " : "";
     const context = `permission request ${perm.request_id.slice(0, 8)} (${perm.tool_name}${perm.agent_id ? ", subagent" : ""})`;
-
     const settings = getSettings();
     const userSession = this.userSessions.get(userId);
     if (!userSession) {
@@ -1613,7 +1686,23 @@ export class WeChatBridge {
         isAskUserQuestion: true,
         createdAt: Date.now(),
       });
-      this.sendCriticalReply(userId, `${agentLabel}${formatSingleQuestion(questions, 0)}`, `AskUserQuestion ${perm.request_id.slice(0, 8)}`).catch(() => {});
+      const sent = await this.sendCriticalReply(userId, `${agentLabel}${formatSingleQuestion(questions, 0)}`, `AskUserQuestion ${perm.request_id.slice(0, 8)}`);
+      if (!sent) {
+        // Message undeliverable — auto-approve with default answers to prevent session from getting stuck
+        console.warn(`[wechat] AskUserQuestion undeliverable, auto-approving with defaults: ${perm.request_id.slice(0, 8)}`);
+        const defaultAnswers: Record<string, string> = {};
+        for (let i = 0; i < questions.length; i++) {
+          const q = questions[i];
+          const opts = Array.isArray(q?.options) ? q.options as Array<Record<string, string>> : [];
+          defaultAnswers[String(i)] = opts.length > 0 ? opts[0].label : "auto-approved";
+        }
+        userSession.pendingAskQuestions.delete(perm.request_id);
+        userSession.pendingPermissions.delete(perm.request_id);
+        this.wsBridge.injectPermissionResponse(sessionId, perm.request_id, "allow", {
+          questions,
+          answers: defaultAnswers,
+        });
+      }
       return;
     }
 
@@ -1633,7 +1722,13 @@ export class WeChatBridge {
         isAskUserQuestion: false,
         createdAt: Date.now(),
       });
-      this.sendCriticalReply(userId, `${agentLabel}${formatPermissionRequest(perm.tool_name, perm.input, perm.description)}`, `dangerous permission ${perm.tool_name}`).catch(() => {});
+      const sent = await this.sendCriticalReply(userId, `${agentLabel}${formatPermissionRequest(perm.tool_name, perm.input, perm.description)}`, `dangerous permission ${perm.tool_name}`);
+      if (!sent) {
+        // Message undeliverable — auto-approve to prevent session from getting permanently stuck
+        console.warn(`[wechat] Dangerous permission undeliverable, auto-approving to prevent stuck session: ${perm.request_id.slice(0, 8)} (${perm.tool_name})`);
+        userSession.pendingPermissions.delete(perm.request_id);
+        this.wsBridge.injectPermissionResponse(sessionId, perm.request_id, "allow", perm.input);
+      }
     } else {
       // Auto-approve everything (bypassPermissions mode)
       this.wsBridge.injectPermissionResponse(sessionId, perm.request_id, "allow", perm.input);
@@ -1737,70 +1832,91 @@ export class WeChatBridge {
   // ── WeChat Send Helpers ───────────────────────────────────────────────
 
   /**
-   * Queue a message for delivery. All sends are serialized through a FIFO queue
-   * so that concurrent fire-and-forget calls (tool notifications + result text)
-   * don't overwhelm the WeChat SDK and silently drop messages.
+   * Queue a message for delivery. All sends are serialized through a single
+   * priority queue. Critical messages jump to the front; normal messages go
+   * to the back. This ensures permission requests and AskUserQuestion prompts
+   * are never stuck behind a flood of tool notifications.
    */
-  private sendReply(userId: string, text: string): void {
+  private sendReply(userId: string, text: string, critical = false): void {
     const chunks = splitForWeChat(text);
     for (const chunk of chunks) {
-      this.sendQueue.push({ userId, text: chunk });
+      if (critical) {
+        this.sendQueue.push({ userId, text: chunk, priority: true });
+      } else {
+        this.sendQueue.push({ userId, text: chunk });
+      }
     }
     this.drainSendQueue();
   }
 
   /**
-   * Send a critical message (permission request, ask-question) directly,
-   * bypassing the normal FIFO queue. Uses higher retry count and explicit
-   * error logging. Returns true if sent successfully.
+   * Send a critical message (permission request, ask-question) through the
+   * priority queue. Returns true if sent successfully (or queued for retry).
+   * On failure, the message is queued in criticalPending for delivery after
+   * bot reconnect — permission messages are never permanently lost.
+   *
+   * IMPORTANT: This enqueues into the serialized sendQueue rather than calling
+   * bot.send() directly, so that all sends go through a single serialized path
+   * and never execute concurrently.
    */
   private async sendCriticalReply(userId: string, text: string, context: string): Promise<boolean> {
     if (!this.bot?.isRunning) {
-      console.error(`[wechat] CRITICAL: Bot not running, cannot deliver ${context}`);
+      // Bot is down — queue for later delivery instead of dropping
+      console.warn(`[wechat] Bot not running, queuing critical message: ${context}`);
+      this.criticalPending.push({ userId, text, context });
+      this.scheduleCriticalRetry();
       return false;
     }
+
+    // Enqueue all chunks as priority items and wait for them to be drained.
+    // We create a promise per chunk so the caller can await the result while
+    // still going through the serialized drainSendQueue path.
     const chunks = splitForWeChat(text);
+    const settled: Array<"ok" | "failed"> = [];
     for (const chunk of chunks) {
-      const maxRetries = 5;
-      let sent = false;
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-          await this.bot.send(userId, chunk);
-          sent = true;
-          break;
-        } catch (err) {
-          if (attempt < maxRetries) {
-            console.warn(`[wechat] Critical send failed (${context}, attempt ${attempt + 1}/${maxRetries + 1}), retrying...`, err);
-            await new Promise((r) => setTimeout(r, 1_000 * (attempt + 1)));
-          } else {
-            console.error(`[wechat] CRITICAL: Failed to deliver ${context} after ${maxRetries + 1} attempts`, err);
-          }
-        }
-      }
-      if (!sent) return false;
+      this.sendQueue.push({ userId, text: chunk, priority: true, _resolve: (result) => settled.push(result) });
+    }
+    this.drainSendQueue();
+
+    // drainSendQueue is async — poll until all chunks have settled.
+    // This is safe because drainSendQueue serializes all sends and resolves
+    // each chunk's callback inline.
+    while (settled.length < chunks.length) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    if (settled.includes("failed")) {
+      // At least one chunk failed after retries — queue entire message for later
+      this.criticalPending.push({ userId, text, context });
+      this.scheduleCriticalRetry();
+      return false;
     }
     return true;
   }
 
-  /** Process the send queue one message at a time. */
+  /** Process the send queue one message at a time. Priority items are sent first. */
   private async drainSendQueue(): Promise<void> {
     if (this.sending) return; // already draining
     this.sending = true;
     try {
       while (this.sendQueue.length > 0) {
-        const item = this.sendQueue.shift()!;
+        // Pick the first priority item, or fall back to the head of the queue
+        const prioIdx = this.sendQueue.findIndex((m) => m.priority);
+        const item = prioIdx >= 0 ? this.sendQueue.splice(prioIdx, 1)[0] : this.sendQueue.shift()!;
+
         if (!this.bot?.isRunning) {
           console.warn("[wechat] Bot not running, requeuing message");
           this.sendQueue.unshift(item);
-          // Retry after a delay — if bot stays down, the next drain call
-          // (triggered by sendReply or bot reconnect) will pick it up.
           setTimeout(() => this.drainSendQueue(), 5_000);
           return;
         }
-        const maxRetries = 2;
+
+        const maxRetries = item.priority ? 5 : 2;
+        let sent = false;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
             await this.bot.send(item.userId, item.text);
+            sent = true;
             break; // success
           } catch (err) {
             if (attempt < maxRetries) {
@@ -1811,10 +1927,48 @@ export class WeChatBridge {
             }
           }
         }
+        item._resolve?.(sent ? "ok" : "failed");
       }
     } finally {
       this.sending = false;
+      // Re-check: a message may have been enqueued during the last await
+      if (this.sendQueue.length > 0) {
+        this.drainSendQueue();
+      }
     }
+  }
+
+  /** Clear the critical retry timer (called on stop). */
+  private clearCriticalRetryTimer(): void {
+    if (this.criticalRetryTimer !== null) {
+      clearTimeout(this.criticalRetryTimer);
+      this.criticalRetryTimer = null;
+    }
+  }
+
+  /** Schedule a retry for critical pending messages. */
+  private scheduleCriticalRetry(): void {
+    if (this.criticalRetryTimer) return; // already scheduled
+    this.criticalRetryTimer = setTimeout(() => {
+      this.criticalRetryTimer = null;
+      this.flushCriticalPending();
+    }, 3_000);
+  }
+
+  /** Flush critical pending messages when the bot is back online. */
+  private flushCriticalPending(): void {
+    if (this.criticalPending.length === 0) return;
+    if (!this.bot?.isRunning) {
+      // Bot still down, reschedule
+      this.scheduleCriticalRetry();
+      return;
+    }
+    // Re-inject into the priority queue
+    while (this.criticalPending.length > 0) {
+      const item = this.criticalPending.shift()!;
+      this.sendQueue.push({ userId: item.userId, text: item.text, priority: true });
+    }
+    this.drainSendQueue();
   }
 
   private async sendTyping(userId: string): Promise<void> {

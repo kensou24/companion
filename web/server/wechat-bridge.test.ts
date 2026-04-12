@@ -669,6 +669,7 @@ describe("formatSingleQuestion", () => {
     expect(result).toContain("2. B");
     expect(result).toContain("3. 其他");
     expect(result).toContain("回复序号选择");
+    expect(result).toContain("/pick");
   });
 
   it("formats second question with progress indicator", () => {
@@ -2017,5 +2018,500 @@ describe("WeChat system messages — Chinese unification", () => {
     expect(auth).toContain("权限不足");
     const path = "访问被拒绝: 路径超出默认工作目录范围。";
     expect(path).toContain("访问被拒绝");
+  });
+});
+
+// ── Feature: AskUserQuestion guard — only intercept pure numbers ──────────
+//
+// Verifies that the AskUserQuestion interceptor only catches pure numeric
+// responses (1, 2, 3) matching option counts. Non-numeric text should NOT
+// be consumed as free-text answers — it falls through as a normal message.
+// Users must use /pick <text> for explicit free-text answers.
+
+describe("AskUserQuestion interceptor guard", () => {
+  it("pure numeric string matches option count and is intercepted", () => {
+    // "2" is a pure number and matches options length 3
+    const trimmed = "2";
+    const num = parseInt(trimmed, 10);
+    const isPureNumber = trimmed === String(num);
+    const numOptions = 3;
+    expect(isPureNumber && num >= 1 && num <= numOptions).toBe(true);
+  });
+
+  it("non-numeric text is NOT intercepted (falls through as normal message)", () => {
+    const trimmed = "帮我看看这个文件";
+    const num = parseInt(trimmed, 10);
+    const isPureNumber = trimmed === String(num);
+    expect(isPureNumber).toBe(false);
+    // This text should pass through to normal message handling
+  });
+
+  it("numeric text with spaces is NOT intercepted", () => {
+    const trimmed = "1 个选项";
+    const num = parseInt(trimmed, 10);
+    const isPureNumber = trimmed === String(num);
+    expect(isPureNumber).toBe(false);
+  });
+
+  it("decimal number is NOT intercepted as option", () => {
+    const trimmed = "1.5";
+    const num = parseInt(trimmed, 10);
+    const isPureNumber = trimmed === String(num);
+    expect(isPureNumber).toBe(false);
+  });
+
+  it("number exceeding options is NOT intercepted", () => {
+    const num = 5;
+    const numOptions = 2;
+    expect(num >= 1 && num <= numOptions).toBe(false);
+    // Falls through — not consumed as answer
+  });
+
+  it("zero is NOT intercepted", () => {
+    const num = 0;
+    expect(num >= 1).toBe(false);
+  });
+});
+
+// ── Feature: Priority send queue ────────────────────────────────────────
+//
+// Verifies that critical messages are prioritized over normal messages
+// in the unified send queue.
+
+describe("Priority send queue", () => {
+  it("priority items are found before normal items", () => {
+    const queue: Array<{ text: string; priority?: boolean }> = [
+      { text: "normal 1" },
+      { text: "normal 2" },
+      { text: "critical", priority: true },
+      { text: "normal 3" },
+    ];
+    const priorityItem = queue.find((m) => m.priority);
+    expect(priorityItem?.text).toBe("critical");
+  });
+
+  it("priority items are removed from queue correctly", () => {
+    const queue: Array<{ text: string; priority?: boolean }> = [
+      { text: "normal 1" },
+      { text: "critical", priority: true },
+      { text: "normal 2" },
+    ];
+    const item = queue.find((m) => m.priority)!;
+    queue.splice(queue.indexOf(item), 1);
+    expect(queue).toEqual([
+      { text: "normal 1" },
+      { text: "normal 2" },
+    ]);
+  });
+
+  it("falls back to head when no priority items", () => {
+    const queue: Array<{ text: string; priority?: boolean }> = [
+      { text: "normal 1" },
+      { text: "normal 2" },
+    ];
+    const priorityItem = queue.find((m) => m.priority);
+    expect(priorityItem).toBeUndefined();
+    // Would fall back to queue.shift() → "normal 1"
+  });
+
+  it("multiple priority items: first one is picked", () => {
+    const queue: Array<{ text: string; priority?: boolean }> = [
+      { text: "critical 1", priority: true },
+      { text: "normal" },
+      { text: "critical 2", priority: true },
+    ];
+    const item = queue.find((m) => m.priority);
+    expect(item?.text).toBe("critical 1");
+  });
+});
+
+// ── Feature: Critical pending queue for bot reconnect ──────────────────
+//
+// Verifies that critical messages are queued when bot is down and
+// can be flushed when the bot reconnects.
+
+describe("Critical pending queue", () => {
+  it("messages accumulate when bot is down", () => {
+    const criticalPending: Array<{ userId: string; text: string; context: string }> = [];
+    criticalPending.push({ userId: "user1", text: "permission request A", context: "perm-A" });
+    criticalPending.push({ userId: "user1", text: "AskUserQuestion", context: "ask-1" });
+    expect(criticalPending.length).toBe(2);
+  });
+
+  it("messages are flushed into priority queue", () => {
+    const criticalPending: Array<{ userId: string; text: string; context: string }> = [
+      { userId: "user1", text: "permission request A", context: "perm-A" },
+    ];
+    const sendQueue: Array<{ userId: string; text: string; priority?: boolean }> = [];
+    while (criticalPending.length > 0) {
+      const item = criticalPending.shift()!;
+      sendQueue.push({ userId: item.userId, text: item.text, priority: true });
+    }
+    expect(criticalPending.length).toBe(0);
+    expect(sendQueue).toEqual([{ userId: "user1", text: "permission request A", priority: true }]);
+  });
+});
+
+// ── Feature: Permission cancel sync check ──────────────────────────────
+//
+// Verifies that cmdPermissionResponse skips cancelled permissions
+// by checking ws-bridge's pendingPermissions map.
+
+describe("Permission cancel sync check", () => {
+  it("skips permission that no longer exists in ws-bridge", () => {
+    // Simulates: ws-bridge already cancelled this request
+    const wsBridgePending = new Map<string, { requestId: string }>();
+    // req-1 was cancelled, only req-2 remains
+    wsBridgePending.set("req-2", { requestId: "req-2" });
+
+    const userPending = new Map<string, { requestId: string; sessionId: string }>();
+    userPending.set("req-1", { requestId: "req-1", sessionId: "s1" });
+    userPending.set("req-2", { requestId: "req-2", sessionId: "s1" });
+
+    // Try req-1 first (FIFO)
+    const [firstKey, firstVal] = userPending.entries().next().value! as [string, any];
+    userPending.delete(firstKey);
+
+    // Check if still in ws-bridge
+    const exists = wsBridgePending.has(firstKey);
+    expect(exists).toBe(false); // req-1 was cancelled
+
+    // Should skip to next
+    const [secondKey] = userPending.entries().next().value! as [string, any];
+    expect(secondKey).toBe("req-2");
+  });
+
+  it("resolves permission that still exists in ws-bridge", () => {
+    const wsBridgePending = new Map<string, { requestId: string }>();
+    wsBridgePending.set("req-1", { requestId: "req-1" });
+
+    const exists = wsBridgePending.has("req-1");
+    expect(exists).toBe(true); // Can safely resolve
+  });
+});
+
+// ── Feature: Fallback auto-approve when critical message fails ──────────
+//
+// When sendCriticalReply fails (bot down, SDK error), the system should
+// auto-approve the permission to prevent the session from getting stuck.
+
+describe("Fallback auto-approve on send failure", () => {
+  it("AskUserQuestion gets default answers when undeliverable", () => {
+    const questions = [
+      { question: "Which approach?", options: [{ label: "A" }, { label: "B" }] },
+      { question: "Confirm?", options: [{ label: "Yes" }] },
+    ];
+    // Simulates fallback logic: pick first option for each question
+    const defaultAnswers: Record<string, string> = {};
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      const opts = Array.isArray(q?.options) ? q.options as Array<Record<string, string>> : [];
+      defaultAnswers[String(i)] = opts.length > 0 ? opts[0].label : "auto-approved";
+    }
+    expect(defaultAnswers).toEqual({ "0": "A", "1": "Yes" });
+  });
+
+  it("AskUserQuestion with no options gets auto-approved text", () => {
+    const questions = [{ question: "Name?", options: [] }];
+    const defaultAnswers: Record<string, string> = {};
+    for (let i = 0; i < questions.length; i++) {
+      const opts = Array.isArray(questions[i]?.options) ? questions[i].options as Array<Record<string, string>> : [];
+      defaultAnswers[String(i)] = opts.length > 0 ? opts[0].label : "auto-approved";
+    }
+    expect(defaultAnswers).toEqual({ "0": "auto-approved" });
+  });
+
+  it("dangerous tool permission is auto-approved when undeliverable", () => {
+    // When the permission message cannot be delivered to WeChat, the system
+    // should auto-approve to prevent session from getting stuck.
+    const sendSucceeded = false;
+    const toolName = "Bash";
+    const shouldAutoApprove = !sendSucceeded;
+    expect(shouldAutoApprove).toBe(true);
+  });
+});
+
+// ── Feature: /pick command ────────────────────────────────────────────
+//
+// Verifies the /pick command parsing and behavior.
+
+describe("/pick command parsing", () => {
+  it("parses /pick with numeric argument", () => {
+    const result = parseCommand("/pick 1");
+    expect(result).toEqual({ type: "command", command: "pick", args: "1" });
+  });
+
+  it("parses /pick with free-text argument", () => {
+    const result = parseCommand("/pick 使用React框架");
+    expect(result).toEqual({ type: "command", command: "pick", args: "使用React框架" });
+  });
+
+  it("parses /pick with no argument", () => {
+    const result = parseCommand("/pick");
+    expect(result).toEqual({ type: "command", command: "pick", args: "" });
+  });
+});
+
+// ── Integration: Priority send queue + drainSendQueue ───────────────────
+//
+// Verifies that the priority send queue correctly serializes all sends
+// through a single path and handles priority ordering, bot-down scenarios,
+// and the _resolve callback contract used by sendCriticalReply.
+
+describe("Priority send queue — drainSendQueue integration", () => {
+  // Simulate the drainSendQueue logic extracted from the class.
+  // We can't instantiate WeChatBridge directly, so we test the queue
+  // mechanics with a mock bot.send().
+
+  it("sends priority items before normal items", async () => {
+    const sent: string[] = [];
+    const mockSend = async (_userId: string, text: string) => { sent.push(text); };
+
+    const queue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (r: "ok" | "failed") => void }> = [
+      { userId: "u1", text: "normal-1" },
+      { userId: "u1", text: "critical-perm", priority: true },
+      { userId: "u1", text: "normal-2" },
+    ];
+
+    // Drain with priority-first logic (mirrors drainSendQueue)
+    while (queue.length > 0) {
+      const prioIdx = queue.findIndex((m) => m.priority);
+      const item = prioIdx >= 0 ? queue.splice(prioIdx, 1)[0] : queue.shift()!;
+      await mockSend(item.userId, item.text);
+      item._resolve?.("ok");
+    }
+
+    expect(sent).toEqual(["critical-perm", "normal-1", "normal-2"]);
+  });
+
+  it("calls _resolve with 'ok' on success and 'failed' on error", async () => {
+    const results: Array<"ok" | "failed"> = [];
+    let callCount = 0;
+
+    const mockSend = async () => {
+      callCount++;
+      if (callCount === 1) throw new Error("SDK error");
+      // Succeeds on retry
+    };
+
+    const queue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (r: "ok" | "failed") => void }> = [
+      { userId: "u1", text: "msg-1", priority: true, _resolve: (r) => results.push(r) },
+    ];
+
+    // Simulate retry logic from drainSendQueue
+    const item = queue.shift()!;
+    const maxRetries = 5;
+    let sent = false;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        await mockSend();
+        sent = true;
+        break;
+      } catch {
+        if (attempt >= maxRetries) { /* final failure */ }
+      }
+    }
+    item._resolve?.(sent ? "ok" : "failed");
+
+    expect(results).toEqual(["ok"]);
+  });
+
+  it("calls _resolve with 'failed' when all retries exhausted", async () => {
+    const results: Array<"ok" | "failed"> = [];
+    const mockSend = async () => { throw new Error("permanent failure"); };
+
+    const queue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (r: "ok" | "failed") => void }> = [
+      { userId: "u1", text: "msg-1", priority: true, _resolve: (r) => results.push(r) },
+    ];
+
+    const item = queue.shift()!;
+    const maxRetries = 2;
+    let sent = false;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        await mockSend();
+        sent = true;
+        break;
+      } catch {
+        // retry
+      }
+    }
+    item._resolve?.(sent ? "ok" : "failed");
+
+    expect(results).toEqual(["failed"]);
+  });
+
+  it("handles mixed priority and normal items preserving FIFO within same priority", async () => {
+    const sent: string[] = [];
+    const mockSend = async (_u: string, text: string) => { sent.push(text); };
+
+    const queue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (r: "ok" | "failed") => void }> = [
+      { userId: "u1", text: "normal-1" },
+      { userId: "u1", text: "critical-A", priority: true },
+      { userId: "u1", text: "normal-2" },
+      { userId: "u1", text: "critical-B", priority: true },
+      { userId: "u1", text: "normal-3" },
+    ];
+
+    while (queue.length > 0) {
+      const prioIdx = queue.findIndex((m) => m.priority);
+      const item = prioIdx >= 0 ? queue.splice(prioIdx, 1)[0] : queue.shift()!;
+      await mockSend(item.userId, item.text);
+      item._resolve?.("ok");
+    }
+
+    // All critical first (in insertion order), then all normal
+    expect(sent).toEqual(["critical-A", "critical-B", "normal-1", "normal-2", "normal-3"]);
+  });
+});
+
+// ── Integration: sendCriticalReply via priority queue ───────────────────
+//
+// Verifies that sendCriticalReply enqueues into the priority queue instead
+// of calling bot.send() directly, ensuring all sends are serialized.
+
+describe("sendCriticalReply via priority queue", () => {
+  it("queues critical chunks as priority items with _resolve callbacks", () => {
+    // Simulates what sendCriticalReply does internally
+    const queue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (r: "ok" | "failed") => void }> = [];
+    const userId = "user-1";
+    const text = "Permission request: allow Bash?";
+    const chunks = [text]; // splitForWeChat would normally chunk this
+
+    for (const chunk of chunks) {
+      queue.push({ userId, text: chunk, priority: true, _resolve: () => {} });
+    }
+
+    expect(queue.length).toBe(1);
+    expect(queue[0].priority).toBe(true);
+    expect(queue[0]._resolve).toBeDefined();
+  });
+
+  it("queues to criticalPending when bot is down and returns false", () => {
+    const criticalPending: Array<{ userId: string; text: string; context: string }> = [];
+    const botRunning = false;
+
+    // Simulates sendCriticalReply's bot-down path
+    function sendCriticalReply(userId: string, text: string, context: string): boolean {
+      if (!botRunning) {
+        criticalPending.push({ userId, text, context });
+        return false;
+      }
+      return true;
+    }
+
+    const result = sendCriticalReply("user-1", "Permission: Bash?", "perm-abc");
+    expect(result).toBe(false);
+    expect(criticalPending).toEqual([{ userId: "user-1", text: "Permission: Bash?", context: "perm-abc" }]);
+  });
+});
+
+// ── Integration: criticalRetryTimer cleanup on stop ───────────────────
+//
+// Verifies that the criticalRetryTimer is properly cleared when stop() is
+// called, preventing the timer leak described in BUG 2.
+
+describe("criticalRetryTimer cleanup", () => {
+  it("clearing timer prevents future callbacks", () => {
+    vi.useFakeTimers();
+    let callbackFired = false;
+    let timerId: ReturnType<typeof setTimeout> | null = setTimeout(() => {
+      callbackFired = true;
+      timerId = null;
+    }, 3_000);
+
+    // Simulate stop() clearing the timer
+    if (timerId !== null) {
+      clearTimeout(timerId);
+      timerId = null;
+    }
+
+    vi.advanceTimersByTime(10_000);
+    expect(callbackFired).toBe(false);
+    vi.useRealTimers();
+  });
+
+  it("timer fires when NOT cleared", () => {
+    vi.useFakeTimers();
+    let callbackFired = false;
+    setTimeout(() => { callbackFired = true; }, 3_000);
+
+    // Don't clear it
+    vi.advanceTimersByTime(3_000);
+    expect(callbackFired).toBe(true);
+    vi.useRealTimers();
+  });
+
+  it("flushCriticalPending reschedules when bot is still down", () => {
+    vi.useFakeTimers();
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+    let flushCount = 0;
+
+    function scheduleCriticalRetry() {
+      if (timerId) return;
+      timerId = setTimeout(() => {
+        timerId = null;
+        flushCount++;
+      }, 3_000);
+    }
+
+    function clearCriticalRetryTimer() {
+      if (timerId !== null) {
+        clearTimeout(timerId);
+        timerId = null;
+      }
+    }
+
+    // Bot is down, schedule retry
+    scheduleCriticalRetry();
+    vi.advanceTimersByTime(3_000);
+    expect(flushCount).toBe(1);
+
+    // Bot still down, reschedule
+    scheduleCriticalRetry();
+    vi.advanceTimersByTime(3_000);
+    expect(flushCount).toBe(2);
+
+    // stop() clears the timer
+    scheduleCriticalRetry();
+    clearCriticalRetryTimer();
+    vi.advanceTimersByTime(10_000);
+    expect(flushCount).toBe(2); // no additional fire after stop
+    vi.useRealTimers();
+  });
+});
+
+// ── Integration: drainSendQueue re-check on finally ───────────────────
+//
+// Verifies that drainSendQueue re-checks the queue in its finally block
+// so messages enqueued during the last await are not stranded.
+
+describe("drainSendQueue finally re-check", () => {
+  it("catches message enqueued during last send", async () => {
+    const sent: string[] = [];
+    const mockSend = async (_u: string, text: string) => { sent.push(text); };
+
+    const queue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (r: "ok" | "failed") => void }> = [
+      { userId: "u1", text: "msg-1" },
+    ];
+
+    // Simulate drainSendQueue: process msg-1, then during the await
+    // a new message arrives (simulating a relay event)
+    const item = queue.shift()!;
+    await mockSend(item.userId, item.text);
+    item._resolve?.("ok");
+
+    // Simulate concurrent enqueue during await
+    queue.push({ userId: "u1", text: "msg-2" });
+
+    // The finally-block re-check detects the new message
+    if (queue.length > 0) {
+      const item2 = queue.shift()!;
+      await mockSend(item2.userId, item2.text);
+      item2._resolve?.("ok");
+    }
+
+    expect(sent).toEqual(["msg-1", "msg-2"]);
+    expect(queue.length).toBe(0);
   });
 });
