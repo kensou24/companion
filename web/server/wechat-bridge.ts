@@ -1228,7 +1228,7 @@ export class WeChatBridge {
             if (relayData) {
               relayData.toolNotifyBuffer.push(labeled);
               if (!relayData.toolNotifyTimer) {
-                relayData.toolNotifyTimer = setTimeout(() => this.flushToolNotifyBuffer(userId, sessionId), 3000);
+                relayData.toolNotifyTimer = setTimeout(() => this.flushToolNotifyBuffer(userId, sessionId), 15_000);
               }
             }
           }
