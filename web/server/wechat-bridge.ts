@@ -66,6 +66,13 @@ const MAX_RECONNECT_ATTEMPTS = 20;
 const HEARTBEAT_INITIAL_DELAY_MS = 30_000; // 30 seconds of silence before first "still working"
 const HEARTBEAT_INTERVAL_MS = 15_000; // every 15 seconds after that
 
+// Send pacing: minimum gap between consecutive sends to avoid hitting API rate limits
+const SEND_MIN_INTERVAL_MS = 2_000;
+// Rate-limit backoff: when a ret=-2 is detected, pause the queue for this long
+const RATE_LIMIT_COOLDOWN_MS = 10_000;
+// Maximum exponential backoff cap for rate-limit retries
+const RATE_LIMIT_MAX_BACKOFF_MS = 60_000;
+
 const PERSIST_PATH = join(COMPANION_HOME, "wechat-sessions.json");
 
 const HELP_TEXT = `Companion WeChat Bot Commands:
@@ -208,6 +215,12 @@ function extractToolUses(msg: BrowserIncomingMessage): Array<{ name: string; inp
 }
 
 /** Extract tool_result blocks (errors only) from assistant message content. */
+/** Check if an error is a WeChat API rate-limit signal (ret=-2). */
+export function isRateLimitError(err: unknown): boolean {
+  const s = err instanceof Error ? err.message : String(err);
+  return /ret\s*=\s*-2/i.test(s);
+}
+
 export function extractToolResults(msg: BrowserIncomingMessage): Array<{ tool_use_id: string; content: string; is_error: boolean }> {
   if (msg.type !== "assistant") return [];
   const raw = msg as Record<string, unknown>;
@@ -319,6 +332,9 @@ export class WeChatBridge {
   // messages from being permanently lost during bot disconnections.
   private criticalPending: Array<{ userId: string; text: string; context: string }> = [];
   private criticalRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  // Rate-limit state: tracks last send time and cooldown after API rate-limit errors
+  private lastSendTs = 0;
+  private rateLimitCoolDownUntil = 0;
 
   constructor(wsBridge: WsBridge, orchestrator: SessionOrchestrator) {
     this.wsBridge = wsBridge;
@@ -1894,7 +1910,13 @@ export class WeChatBridge {
     return true;
   }
 
-  /** Process the send queue one message at a time. Priority items are sent first. */
+  /** Check if an error is a WeChat API rate-limit signal (ret=-2). */
+  private isRateLimitError(err: unknown): boolean {
+    return isRateLimitError(err);
+  }
+
+  /** Process the send queue one message at a time. Priority items are sent first.
+   *  Includes send pacing and rate-limit detection to avoid API throttling. */
   private async drainSendQueue(): Promise<void> {
     if (this.sending) return; // already draining
     this.sending = true;
@@ -1911,22 +1933,64 @@ export class WeChatBridge {
           return;
         }
 
+        // Respect cooldown from a previous rate-limit error
+        const now = Date.now();
+        if (now < this.rateLimitCoolDownUntil) {
+          this.sendQueue.unshift(item);
+          const waitMs = this.rateLimitCoolDownUntil - now;
+          console.warn(`[wechat] Rate-limit cooldown active, pausing queue for ${Math.ceil(waitMs / 1000)}s`);
+          setTimeout(() => this.drainSendQueue(), waitMs);
+          return;
+        }
+
+        // Pace sends: wait at least SEND_MIN_INTERVAL_MS between consecutive sends
+        const sinceLast = Date.now() - this.lastSendTs;
+        if (sinceLast < SEND_MIN_INTERVAL_MS) {
+          await new Promise((r) => setTimeout(r, SEND_MIN_INTERVAL_MS - sinceLast));
+        }
+
         const maxRetries = item.priority ? 5 : 2;
         let sent = false;
+        let rateLimitHit = false;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
             await this.bot.send(item.userId, item.text);
             sent = true;
+            this.lastSendTs = Date.now();
             break; // success
           } catch (err) {
-            if (attempt < maxRetries) {
-              console.warn(`[wechat] Send failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying...`, err);
-              await new Promise((r) => setTimeout(r, 1_000 * (attempt + 1)));
+            const isRateLimit = this.isRateLimitError(err);
+            if (isRateLimit) {
+              rateLimitHit = true;
+              if (attempt < maxRetries) {
+                // Exponential backoff for rate-limit errors: 5s, 10s, 20s, 40s...
+                const backoffMs = Math.min(5_000 * Math.pow(2, attempt), RATE_LIMIT_MAX_BACKOFF_MS);
+                console.warn(`[wechat] Rate-limited (attempt ${attempt + 1}/${maxRetries + 1}), backing off ${Math.ceil(backoffMs / 1000)}s...`);
+                await new Promise((r) => setTimeout(r, backoffMs));
+              } else {
+                console.error(`[wechat] Rate-limited send failed after ${maxRetries + 1} attempts, dropping`);
+              }
             } else {
-              console.error(`[wechat] Send failed after ${maxRetries + 1} attempts, dropping:`, err);
+              if (attempt < maxRetries) {
+                console.warn(`[wechat] Send failed (attempt ${attempt + 1}/${maxRetries + 1}), retrying...`, err);
+                await new Promise((r) => setTimeout(r, 1_000 * (attempt + 1)));
+              } else {
+                console.error(`[wechat] Send failed after ${maxRetries + 1} attempts, dropping:`, err);
+              }
             }
           }
         }
+
+        // If a rate-limit was hit, set cooldown for subsequent sends
+        if (rateLimitHit && !sent) {
+          this.rateLimitCoolDownUntil = Date.now() + RATE_LIMIT_COOLDOWN_MS;
+          console.warn(`[wechat] Setting rate-limit cooldown for ${RATE_LIMIT_COOLDOWN_MS / 1000}s`);
+        }
+        // Clear cooldown on successful send after a rate-limit hit
+        if (sent && rateLimitHit) {
+          this.rateLimitCoolDownUntil = 0;
+        }
+
         item._resolve?.(sent ? "ok" : "failed");
       }
     } finally {
