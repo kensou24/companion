@@ -62,6 +62,10 @@ const MIN_RECONNECT_DELAY_MS = 2_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 20;
 
+// Progress heartbeat: how long before first heartbeat, and interval between heartbeats
+const HEARTBEAT_INITIAL_DELAY_MS = 30_000; // 30 seconds of silence before first "still working"
+const HEARTBEAT_INTERVAL_MS = 15_000; // every 15 seconds after that
+
 const PERSIST_PATH = join(COMPANION_HOME, "wechat-sessions.json");
 
 const HELP_TEXT = `Companion WeChat Bot Commands:
@@ -287,6 +291,10 @@ export class WeChatBridge {
     lastGitBranch: string;
     contextWarningSent: boolean;
     pendingThinking: string;
+    // Progress heartbeat: periodic "still working" notification for long-running turns
+    heartbeatTimer: ReturnType<typeof setTimeout> | null;
+    turnStartTime: number;
+    lastActiveToolName: string;
   }>();
   private userIdBySession = new Map<string, string>();
   // QR code data for web UI display
@@ -498,7 +506,7 @@ export class WeChatBridge {
     if (settings.wechatAllowedUsers) {
       const allowed = settings.wechatAllowedUsers.split(",").map((s) => s.trim()).filter(Boolean);
       if (allowed.length > 0 && !allowed.includes(userId)) {
-        await this.sendReply(userId, "Access denied. Contact the admin to add your WeChat ID.");
+        await this.sendReply(userId, "⛔ 权限不足，请联系管理员添加你的微信ID。");
         return;
       }
     }
@@ -561,7 +569,7 @@ export class WeChatBridge {
     const sessionId = userSession.sessionIds[userSession.activeSessionIndex];
 
     if (!sessionId) {
-      await this.sendReply(userId, "No active session. Send /new to create one.");
+      await this.sendReply(userId, "没有活跃的会话，发送 /new 创建新会话。");
       return;
     }
 
@@ -569,7 +577,7 @@ export class WeChatBridge {
     if (!session) {
       // Session no longer exists, clean up
       this.removeSessionFromUser(userId, sessionId);
-      await this.sendReply(userId, "Session expired. Send /new to create a new one.");
+      await this.sendReply(userId, "会话已过期，发送 /new 创建新会话。");
       return;
     }
 
@@ -581,6 +589,15 @@ export class WeChatBridge {
 
     // Inject the user message
     this.wsBridge.injectUserMessage(sessionId, text);
+
+    // Start progress heartbeat for this turn
+    const relayData = this.sessionRelayData.get(sessionId);
+    if (relayData) {
+      relayData.turnStartTime = Date.now();
+      relayData.lastUserFacingMessageTs = Date.now();
+      relayData.lastActiveToolName = "";
+      this.startHeartbeat(sessionId, userId);
+    }
   }
 
   private async handleCommand(userId: string, cmd: string, args: string): Promise<void> {
@@ -652,7 +669,7 @@ export class WeChatBridge {
       try {
         mkdirSync(cwd, { recursive: true });
       } catch (err) {
-        await this.sendReply(userId, `Failed to create directory: ${err instanceof Error ? err.message : String(err)}`);
+        await this.sendReply(userId, `创建目录失败: ${err instanceof Error ? err.message : String(err)}`);
         return;
       }
     } else if (baseCwd) {
@@ -665,7 +682,7 @@ export class WeChatBridge {
     });
 
     if (!result.ok) {
-      await this.sendReply(userId, `Failed to create session: ${result.error}`);
+      await this.sendReply(userId, `创建会话失败: ${result.error}`);
       return;
     }
 
@@ -684,17 +701,17 @@ export class WeChatBridge {
     this.persistSessionMappings();
     this.ensureRelay(sessionId, userId);
 
-    await this.sendReply(userId, `Session created: ${sessionId.slice(0, 8)}...\nModel: ${result.session.model || "default"}\nCWD: ${result.session.cwd}\n\nSession #${userSession.activeSessionIndex + 1} of ${userSession.sessionIds.length}`);
+    await this.sendReply(userId, `✅ 会话已创建: ${sessionId.slice(0, 8)}...\n模型: ${result.session.model || "default"}\n目录: ${result.session.cwd}\n会话 #${userSession.activeSessionIndex + 1} / ${userSession.sessionIds.length}`);
   }
 
   private async cmdListSessions(userId: string): Promise<void> {
     const userSession = this.userSessions.get(userId);
     if (!userSession || userSession.sessionIds.length === 0) {
-      await this.sendReply(userId, "No sessions. Send /new to create one.");
+      await this.sendReply(userId, "没有会话，发送 /new 创建新会话。");
       return;
     }
 
-    const lines: string[] = [`📋 Your sessions (${userSession.sessionIds.length}):`];
+    const lines: string[] = [`📋 你的会话 (${userSession.sessionIds.length}):`];
     userSession.sessionIds.forEach((sid, i) => {
       const session = this.wsBridge.getSession(sid);
       const state = session?.state;
@@ -709,26 +726,30 @@ export class WeChatBridge {
       const phase = session.stateMachine?.phase ?? "unknown";
       const phaseEmoji = phase === "ready" ? "🟢" : phase === "streaming" ? "🔵" : phase === "awaiting_permission" ? "🟡" : "⚪";
 
+      // Localized phase names
+      const phaseLabel: Record<string, string> = { ready: "就绪", streaming: "生成中", awaiting_permission: "等待审批", starting: "启动中", compacting: "压缩中" };
+      const displayPhase = phaseLabel[phase] ?? phase;
+
       lines.push("");
       lines.push(`${isActive ? "▶" : " "} #${i + 1} ${sid.slice(0, 8)}... ${isActive ? "← active" : ""}`);
-      lines.push(`  ${phaseEmoji} ${phase} | ${state.model || "?"}`);
+      lines.push(`  ${phaseEmoji} ${displayPhase} | ${state.model || "?"}`);
       lines.push(`  📁 ${state.cwd || "?"}`);
 
       const details: string[] = [];
-      details.push(`turns: ${state.num_turns ?? 0}`);
-      details.push(`cost: $${(state.total_cost_usd ?? 0).toFixed(4)}`);
-      details.push(`in: ${fmtTokens(state.input_tokens ?? 0)}`);
-      details.push(`out: ${fmtTokens(state.output_tokens ?? 0)}`);
-      if (state.git_branch) details.push(`branch: ${state.git_branch}`);
-      if (state.permissionMode) details.push(`mode: ${state.permissionMode}`);
+      details.push(`轮次: ${state.num_turns ?? 0}`);
+      details.push(`费用: $${(state.total_cost_usd ?? 0).toFixed(4)}`);
+      details.push(`输入: ${fmtTokens(state.input_tokens ?? 0)}`);
+      details.push(`输出: ${fmtTokens(state.output_tokens ?? 0)}`);
+      if (state.git_branch) details.push(`分支: ${state.git_branch}`);
+      if (state.permissionMode) details.push(`模式: ${state.permissionMode}`);
       const pendingPerms = session.pendingPermissions.size;
-      if (pendingPerms > 0) details.push(`⏳ ${pendingPerms} pending`);
+      if (pendingPerms > 0) details.push(`⏳ ${pendingPerms} 待审批`);
 
       lines.push(`  ${details.join(" | ")}`);
     });
 
     lines.push("");
-    lines.push("Send /switch <n> to switch, /status for details.");
+    lines.push("发送 /switch <n> 切换会话，/status 查看详情。");
 
     await this.sendReply(userId, lines.join("\n"));
   }
@@ -737,19 +758,19 @@ export class WeChatBridge {
     const index = parseInt(args, 10) - 1;
     const userSession = this.userSessions.get(userId);
     if (!userSession || isNaN(index) || index < 0 || index >= userSession.sessionIds.length) {
-      await this.sendReply(userId, `Invalid session number. Use /sessions to see your sessions.`);
+      await this.sendReply(userId, `无效的会话编号，使用 /sessions 查看会话列表。`);
       return;
     }
     userSession.activeSessionIndex = index;
     this.persistSessionMappings();
     const sid = userSession.sessionIds[index];
-    await this.sendReply(userId, `Switched to session #${index + 1}: ${sid.slice(0, 8)}...`);
+    await this.sendReply(userId, `已切换到会话 #${index + 1}: ${sid.slice(0, 8)}...`);
   }
 
   private async cmdKillSession(userId: string): Promise<void> {
     const userSession = this.userSessions.get(userId);
     if (!userSession || userSession.sessionIds.length === 0) {
-      await this.sendReply(userId, "No active session to kill.");
+      await this.sendReply(userId, "没有活跃的会话可以终止。");
       return;
     }
 
@@ -758,8 +779,8 @@ export class WeChatBridge {
     this.removeSessionFromUser(userId, sessionId);
 
     const msg = userSession.sessionIds.length > 0
-      ? `Session killed. Switched to session #${userSession.activeSessionIndex + 1}.`
-      : "Session killed. No more sessions.";
+      ? `会话已终止，已切换到会话 #${userSession.activeSessionIndex + 1}。`
+      : "会话已终止，没有更多会话。";
     await this.sendReply(userId, msg);
   }
 
@@ -767,7 +788,7 @@ export class WeChatBridge {
   private async cmdClear(userId: string): Promise<void> {
     const userSession = this.userSessions.get(userId);
     if (!userSession || userSession.sessionIds.length === 0) {
-      await this.sendReply(userId, "No active session. Send /new to create one.");
+      await this.sendReply(userId, "没有活跃的会话，发送 /new 创建新会话。");
       return;
     }
 
@@ -787,7 +808,7 @@ export class WeChatBridge {
     });
 
     if (!result.ok) {
-      await this.sendReply(userId, `Failed to create new session: ${result.error}`);
+      await this.sendReply(userId, `创建新会话失败: ${result.error}`);
       return;
     }
 
@@ -804,37 +825,37 @@ export class WeChatBridge {
     this.persistSessionMappings();
     this.ensureRelay(newSessionId, userId);
 
-    await this.sendReply(userId, `🧹 上下文已清除，新会话已创建。\nSession: ${newSessionId.slice(0, 8)}... | CWD: ${cwd || "default"}`);
+    await this.sendReply(userId, `🧹 上下文已清除，新会话已创建。\n会话: ${newSessionId.slice(0, 8)}... | 目录: ${cwd || "默认"}`);
   }
 
   private async cmdSetModel(userId: string, args: string): Promise<void> {
     const model = args.trim();
     if (!model) {
-      await this.sendReply(userId, "Usage: /model <name>\nExample: /model claude-sonnet-4-6");
+      await this.sendReply(userId, "用法: /model <名称>\n示例: /model claude-sonnet-4-6");
       return;
     }
     const sessionId = this.getActiveSessionId(userId);
     if (!sessionId) return;
     this.wsBridge.injectSetModel(sessionId, model);
-    await this.sendReply(userId, `Model set to: ${model}`);
+    await this.sendReply(userId, `模型已切换: ${model}`);
   }
 
   private async cmdSetPermissionMode(userId: string, args: string): Promise<void> {
     const mode = args.trim();
     if (!mode) {
-      await this.sendReply(userId, "Usage: /mode <mode>\nOptions: bypassPermissions, acceptEdits, plan, default");
+      await this.sendReply(userId, "用法: /mode <模式>\n选项: bypassPermissions, acceptEdits, plan, default");
       return;
     }
     const sessionId = this.getActiveSessionId(userId);
     if (!sessionId) return;
     this.wsBridge.injectSetPermissionMode(sessionId, mode);
-    await this.sendReply(userId, `Permission mode set to: ${mode}`);
+    await this.sendReply(userId, `权限模式已设为: ${mode}`);
   }
 
   private async cmdPermissionResponse(userId: string, behavior: "allow" | "deny"): Promise<void> {
     const userSession = this.userSessions.get(userId);
     if (!userSession || userSession.pendingPermissions.size === 0) {
-      await this.sendReply(userId, "No pending permission request. Tool calls shown with ℹ️ are informational and don't need approval.");
+      await this.sendReply(userId, "没有待审批的权限请求。标记为 ℹ️ 的操作是信息性通知，无需审批。");
       return;
     }
 
@@ -845,14 +866,14 @@ export class WeChatBridge {
 
     this.wsBridge.injectPermissionResponse(pending.sessionId, requestId, behavior);
     const agentLabel = pending.agentId ? "[子任务] " : "";
-    await this.sendReply(userId, `${agentLabel}Permission ${behavior === "allow" ? "approved" : "denied"}.`);
+    await this.sendReply(userId, `${agentLabel}${behavior === "allow" ? "已批准 ✅" : "已拒绝 ❌"}`);
   }
 
   private async cmdInterrupt(userId: string): Promise<void> {
     const sessionId = this.getActiveSessionId(userId);
     if (!sessionId) return;
     this.wsBridge.injectInterrupt(sessionId);
-    await this.sendReply(userId, "Interrupt sent. The current operation will be cancelled.");
+    await this.sendReply(userId, "中断信号已发送，当前操作将被取消。");
   }
 
   private async cmdStatus(userId: string): Promise<void> {
@@ -860,25 +881,26 @@ export class WeChatBridge {
     if (!sessionId) return;
     const session = this.wsBridge.getSession(sessionId);
     if (!session) {
-      await this.sendReply(userId, "Session not found.");
+      await this.sendReply(userId, "会话未找到。");
       return;
     }
     const userSession = this.userSessions.get(userId);
     const state = session.state;
     const phase = session.stateMachine?.phase ?? "unknown";
     const pendingPerms = session.pendingPermissions.size;
+    const phaseLabel: Record<string, string> = { ready: "就绪", streaming: "生成中", awaiting_permission: "等待审批", starting: "启动中", compacting: "压缩中" };
     const lines = [
-      `Session: ${sessionId.slice(0, 8)}...`,
-      `Phase: ${phase}`,
-      `Model: ${state.model || "?"}`,
-      `Permission mode: ${state.permissionMode || "?"}`,
-      `Turns: ${state.num_turns ?? 0}`,
-      `Cost: $${(state.total_cost_usd ?? 0).toFixed(4)}`,
-      `Input tokens: ${fmtTokens(state.input_tokens ?? 0)}`,
-      `Output tokens: ${fmtTokens(state.output_tokens ?? 0)}`,
-      `CWD: ${state.cwd}`,
-      `Branch: ${state.git_branch || "none"}`,
-      `Pending permissions: ${pendingPerms}`,
+      `会话: ${sessionId.slice(0, 8)}...`,
+      `阶段: ${phaseLabel[phase] ?? phase}`,
+      `模型: ${state.model || "?"}`,
+      `权限模式: ${state.permissionMode || "?"}`,
+      `轮次: ${state.num_turns ?? 0}`,
+      `费用: $${(state.total_cost_usd ?? 0).toFixed(4)}`,
+      `输入 Token: ${fmtTokens(state.input_tokens ?? 0)}`,
+      `输出 Token: ${fmtTokens(state.output_tokens ?? 0)}`,
+      `工作目录: ${state.cwd}`,
+      `分支: ${state.git_branch || "无"}`,
+      `待审批: ${pendingPerms}`,
       `工具通知: ${(userSession?.verboseMode ?? false) ? "逐条" : "批量"}`,
       `思考显示: ${(userSession?.thinkingMode ?? false) ? "开启" : "关闭"}`,
     ];
@@ -889,7 +911,7 @@ export class WeChatBridge {
     const settings = getSettings();
     const baseCwd = settings.wechatDefaultCwd;
     if (!baseCwd) {
-      await this.sendReply(userId, "Default working directory not configured. Set it in Settings > Default Working Directory.");
+      await this.sendReply(userId, "未配置默认工作目录，请在 设置 > 默认工作目录 中配置。");
       return;
     }
 
@@ -898,12 +920,12 @@ export class WeChatBridge {
 
     // Safety: ensure target is within baseCwd
     if (!targetDir.startsWith(resolve(baseCwd))) {
-      await this.sendReply(userId, "Access denied: path is outside the default working directory.");
+      await this.sendReply(userId, "访问被拒绝: 路径超出默认工作目录范围。");
       return;
     }
 
     if (!existsSync(targetDir)) {
-      await this.sendReply(userId, `Directory not found: ${subPath || baseCwd}`);
+      await this.sendReply(userId, `目录不存在: ${subPath || baseCwd}`);
       return;
     }
 
@@ -914,13 +936,13 @@ export class WeChatBridge {
 
       const lines = this.listDirectory(actualDir, recursive, 0, 3);
       if (lines.length === 0) {
-        await this.sendReply(userId, `Empty directory: ${cleanSubPath || "(root)"}`);
+        await this.sendReply(userId, `空目录: ${cleanSubPath || "(根目录)"}`);
         return;
       }
-      const header = cleanSubPath ? `Contents of ${cleanSubPath}:` : `Contents of default directory:`;
+      const header = cleanSubPath ? `${cleanSubPath} 的内容:` : `默认目录的内容:`;
       await this.sendReply(userId, [header, ...lines].join("\n"));
     } catch (err) {
-      await this.sendReply(userId, `Error listing directory: ${err instanceof Error ? err.message : String(err)}`);
+      await this.sendReply(userId, `列出目录失败: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
 
@@ -985,7 +1007,14 @@ export class WeChatBridge {
     if (this.sessionCleanups.has(sessionId)) return;
 
     const cleanups: Array<() => void> = [];
-    this.sessionRelayData.set(sessionId, { pendingText: "", lastTypingTs: 0, streamlinedSent: false, contentSent: false, lastBlockIndex: -1, toolAccumulator: [], lastUserFacingMessageTs: Date.now(), progressSent: false, toolNotifyBuffer: [], toolNotifyTimer: null, phaseReadySeen: false, lastToolProgressTs: 0, lastGitBranch: "", contextWarningSent: false, pendingThinking: "" });
+    this.sessionRelayData.set(sessionId, { pendingText: "", lastTypingTs: 0, streamlinedSent: false, contentSent: false, lastBlockIndex: -1, toolAccumulator: [], lastUserFacingMessageTs: Date.now(), progressSent: false, toolNotifyBuffer: [], toolNotifyTimer: null, phaseReadySeen: false, lastToolProgressTs: 0, lastGitBranch: "", contextWarningSent: false, pendingThinking: "", heartbeatTimer: null, turnStartTime: Date.now(), lastActiveToolName: "" });
+
+    // Helper: send a reply and update the heartbeat tracker
+    const relaySend = (text: string) => {
+      relaySend(text);
+      const rd = this.sessionRelayData.get(sessionId);
+      if (rd) rd.lastUserFacingMessageTs = Date.now();
+    };
 
     // Stream events — accumulate text + thinking
     const unsubStream = companionBus.on("message:stream_event", ({ sessionId: sid, message }) => {
@@ -1022,7 +1051,7 @@ export class WeChatBridge {
         if (relayData.pendingThinking) {
           const thinkingText = relayData.pendingThinking.trim();
           if (thinkingText) {
-            this.sendReply(userId, `🧠 思考:\n${formatMarkdown(thinkingText.length > 800 ? thinkingText.slice(0, 797) + "..." : thinkingText)}`);
+            relaySend(`🧠 思考:\n${formatMarkdown(thinkingText.length > 800 ? thinkingText.slice(0, 797) + "..." : thinkingText)}`);
           }
           relayData.pendingThinking = "";
         }
@@ -1050,7 +1079,7 @@ export class WeChatBridge {
       const raw = message as Record<string, unknown>;
       const text = typeof raw.text === "string" ? raw.text : "";
       if (text.trim()) {
-        this.sendReply(userId, formatMarkdown(text.trim()));
+        relaySend(formatMarkdown(text.trim()));
         const relayData = this.sessionRelayData.get(sessionId);
         if (relayData) {
           relayData.streamlinedSent = true;
@@ -1066,7 +1095,7 @@ export class WeChatBridge {
       const raw = message as Record<string, unknown>;
       const summary = typeof raw.tool_summary === "string" ? raw.tool_summary : "";
       if (summary.trim()) {
-        this.sendReply(userId, `📋 ${summary}`);
+        relaySend(`📋 ${summary}`);
       }
     });
     cleanups.push(unsubToolSummary);
@@ -1088,7 +1117,7 @@ export class WeChatBridge {
         const thinkingText = extractThinkingFromAssistant(message);
         if (thinkingText.trim()) {
           relayData.pendingThinking = thinkingText.trim();
-          this.sendReply(userId, `🧠 思考:\n${formatMarkdown(thinkingText.length > 800 ? thinkingText.slice(0, 797) + "..." : thinkingText)}`);
+          relaySend(`🧠 思考:\n${formatMarkdown(thinkingText.length > 800 ? thinkingText.slice(0, 797) + "..." : thinkingText)}`);
           relayData.pendingThinking = ""; // clear after sending
         }
       }
@@ -1111,6 +1140,8 @@ export class WeChatBridge {
 
           if (relayData) {
             relayData.toolAccumulator.push({ name: t.name, input: parsedInput, toolUseId: t.id });
+            // Track the most recent tool name for heartbeat messages
+            relayData.lastActiveToolName = t.name;
           }
 
           // Route tool call to user notification
@@ -1118,7 +1149,7 @@ export class WeChatBridge {
           if (!formatted) continue; // suppressed tools (TodoWrite, etc.)
           const labeled = `${agentPrefix}${formatted}`;
           if (verboseMode) {
-            this.sendReply(userId, labeled);
+            relaySend(labeled);
           } else {
             if (relayData) {
               relayData.toolNotifyBuffer.push(labeled);
@@ -1136,7 +1167,7 @@ export class WeChatBridge {
         for (const result of toolResults) {
           const match = relayData.toolAccumulator.find(t => t.toolUseId === result.tool_use_id);
           const toolName = match?.name ?? "unknown";
-          this.sendReply(userId, formatToolCallFailure(toolName, result.content));
+          relaySend(formatToolCallFailure(toolName, result.content));
         }
       }
 
@@ -1151,7 +1182,7 @@ export class WeChatBridge {
           if (!SAFE_TOOLS.has(toolName)) {
             const formatted = formatToolResultPreview(toolName, preview.content);
             if (formatted) {
-              this.sendReply(userId, `${agentPrefix}${formatted}`);
+              relaySend(`${agentPrefix}${formatted}`);
             }
           }
         }
@@ -1174,7 +1205,7 @@ export class WeChatBridge {
           if (userSession?.thinkingMode) {
             const thinkingText = relayData.pendingThinking.trim();
             if (thinkingText) {
-              this.sendReply(userId, `🧠 思考:\n${formatMarkdown(thinkingText.length > 800 ? thinkingText.slice(0, 797) + "..." : thinkingText)}`);
+              relaySend(`🧠 思考:\n${formatMarkdown(thinkingText.length > 800 ? thinkingText.slice(0, 797) + "..." : thinkingText)}`);
             }
           }
         }
@@ -1197,11 +1228,11 @@ export class WeChatBridge {
           : streamText.trim();
 
         if (finalText) {
-          this.sendReply(userId, formatMarkdown(finalText));
+          relaySend(formatMarkdown(finalText));
         } else if (!hadContent) {
           if (!data?.is_error) {
             const toolSummary = formatToolSummary(relayData?.toolAccumulator ?? []);
-            this.sendReply(userId, toolSummary || "(操作完成)");
+            relaySend(toolSummary || "(操作完成，无文本输出)");
           }
         }
       }
@@ -1210,7 +1241,7 @@ export class WeChatBridge {
       if (data?.is_error) {
         const errors = data.errors as string[] | undefined;
         if (errors?.length) {
-          this.sendReply(userId, `Error: ${errors.join(", ")}`);
+          relaySend(`❌ 错误: ${errors.join(", ")}`);
         }
       }
 
@@ -1226,19 +1257,19 @@ export class WeChatBridge {
         const linesRemoved = session.state.total_lines_removed ?? 0;
         const statsParts: string[] = [];
         statsParts.push(`$${cost.toFixed(4)}`);
-        statsParts.push(`in ${fmtTokens(session.state.input_tokens ?? 0)}`);
-        statsParts.push(`out ${fmtTokens(session.state.output_tokens ?? 0)}`);
-        statsParts.push(`turn #${turns}`);
+        statsParts.push(`输入 ${fmtTokens(session.state.input_tokens ?? 0)}`);
+        statsParts.push(`输出 ${fmtTokens(session.state.output_tokens ?? 0)}`);
+        statsParts.push(`第 ${turns} 轮`);
         if (linesAdded > 0 || linesRemoved > 0) {
           statsParts.push(`${linesAdded > 0 ? `+${linesAdded}` : ""}${linesAdded > 0 && linesRemoved > 0 ? "/" : ""}${linesRemoved > 0 ? `-${linesRemoved}` : ""} 行`);
         }
         if (cost > 0 || (session.state.input_tokens ?? 0) > 0 || (session.state.output_tokens ?? 0) > 0) {
-          this.sendReply(userId, `💰 ${statsParts.join(" · ")}`);
+          relaySend(`💰 ${statsParts.join(" · ")}`);
         }
         // Context warning: notify once when crossing 80%
         if (relayData && ctxPct >= 80 && !relayData.contextWarningSent) {
           relayData.contextWarningSent = true;
-          this.sendReply(userId, `⚠️ 上下文使用已达 ${ctxPct.toFixed(0)}%，建议发送 /compact 压缩或 /new 开新会话`);
+          relaySend(`⚠️ 上下文使用已达 ${ctxPct.toFixed(0)}%，建议发送 /compact 压缩或 /new 开新会话`);
         }
         if (relayData && ctxPct < 60) {
           relayData.contextWarningSent = false;
@@ -1251,6 +1282,8 @@ export class WeChatBridge {
         relayData.lastUserFacingMessageTs = Date.now();
         relayData.progressSent = false;
         relayData.lastToolProgressTs = 0;
+        relayData.lastActiveToolName = "";
+        this.stopHeartbeat(sessionId);
       }
     });
     cleanups.push(unsubResult);
@@ -1273,7 +1306,7 @@ export class WeChatBridge {
       const wasInAsk = userSession.pendingAskQuestions.delete(requestId);
 
       if (wasInPerms || wasInAsk) {
-        this.sendReply(userId, "Permission request was cancelled.");
+        relaySend("权限请求已取消。");
       }
     });
     cleanups.push(unsubPermCancel);
@@ -1283,7 +1316,7 @@ export class WeChatBridge {
       if (sid !== sessionId) return;
       this.cleanupRelay(sessionId);
       this.removeSessionFromUser(userId, sessionId);
-      this.sendReply(userId, `Session ${sessionId.slice(0, 8)}... exited.`);
+      relaySend(`会话 ${sessionId.slice(0, 8)}... 已退出。`);
     });
     cleanups.push(unsubExited);
 
@@ -1295,7 +1328,7 @@ export class WeChatBridge {
       if (!event) return;
       const formatted = formatSystemEvent(event as { subtype: string; [key: string]: unknown });
       if (formatted) {
-        this.sendReply(userId, formatted);
+        relaySend(formatted);
       }
     });
     cleanups.push(unsubSystemEvent);
@@ -1307,7 +1340,7 @@ export class WeChatBridge {
       const status = typeof raw.status === "string" ? raw.status : "";
       const formatted = formatStatusChange(status);
       if (formatted) {
-        this.sendReply(userId, formatted);
+        relaySend(formatted);
       }
     });
     cleanups.push(unsubStatusChange);
@@ -1332,14 +1365,17 @@ export class WeChatBridge {
       if (toolName === "Agent" && elapsed >= 15) {
         const agentLabel = parentToolUseId ? "[子任务] " : "";
         relayData.lastToolProgressTs = now;
-        this.sendReply(userId, `${agentLabel}🤖 子任务执行中... 已运行 ${Math.round(elapsed)}s`);
+        const elapsedMins = Math.floor(elapsed / 60);
+        const elapsedSecs = Math.round(elapsed % 60);
+        const elapsedStr = elapsedMins > 0 ? `${elapsedMins}分${elapsedSecs}秒` : `${elapsedSecs}秒`;
+        relaySend(`${agentLabel}🤖 子任务执行中... 已运行 ${elapsedStr}`);
         return;
       }
 
       const formatted = formatToolProgress(toolName, toolUseId, elapsed);
       if (formatted) {
         relayData.lastToolProgressTs = now;
-        this.sendReply(userId, formatted);
+        relaySend(formatted);
       }
     });
     cleanups.push(unsubToolProgress);
@@ -1349,7 +1385,7 @@ export class WeChatBridge {
       if (sid !== sessionId) return;
       const formatted = formatAuthStatus(message as Record<string, unknown>);
       if (formatted) {
-        this.sendReply(userId, formatted);
+        relaySend(formatted);
       }
     });
     cleanups.push(unsubAuthStatus);
@@ -1362,7 +1398,7 @@ export class WeChatBridge {
       const formatted = formatPermissionAutoResolved(request.tool_name, request.input, behavior, reason);
       if (formatted) {
         const agentLabel = request.agent_id ? "[子任务] " : "";
-        this.sendReply(userId, `${agentLabel}${formatted}`);
+        relaySend(`${agentLabel}${formatted}`);
       }
     });
     cleanups.push(unsubPermAuto);
@@ -1374,7 +1410,7 @@ export class WeChatBridge {
       const isFirstReady = !relayData?.phaseReadySeen;
       const formatted = formatSessionPhase(from, to, isFirstReady);
       if (formatted) {
-        this.sendReply(userId, formatted);
+        relaySend(formatted);
       }
       if (to === "ready" && relayData) {
         relayData.phaseReadySeen = true;
@@ -1389,7 +1425,7 @@ export class WeChatBridge {
       const suggestions = Array.isArray(raw.suggestions) ? raw.suggestions as string[] : [];
       const formatted = formatPromptSuggestions(suggestions);
       if (formatted) {
-        this.sendReply(userId, formatted);
+        relaySend(formatted);
       }
     });
     cleanups.push(unsubPromptSuggestion);
@@ -1399,7 +1435,7 @@ export class WeChatBridge {
       if (sid !== sessionId) return;
       const name = formatSessionName(firstUserMessage);
       if (name) {
-        this.sendReply(userId, `📝 会话已命名: ${name}`);
+        relaySend(`📝 会话已命名: ${name}`);
       }
     });
     cleanups.push(unsubFirstTurn);
@@ -1410,7 +1446,7 @@ export class WeChatBridge {
       const relayData = this.sessionRelayData.get(sessionId);
       if (!relayData) return;
       if (relayData.lastGitBranch && relayData.lastGitBranch !== branch) {
-        this.sendReply(userId, `🔀 分支切换: ${relayData.lastGitBranch} → ${branch}`);
+        relaySend(`🔀 分支切换: ${relayData.lastGitBranch} → ${branch}`);
       }
       relayData.lastGitBranch = branch;
     });
@@ -1421,14 +1457,14 @@ export class WeChatBridge {
       if (sid !== sessionId) return;
       this.cleanupRelay(sessionId);
       this.removeSessionFromUser(userId, sessionId);
-      this.sendReply(userId, `⏰ 会话 ${sessionId.slice(0, 8)}... 因长时间无活动已自动关闭。\n发送 /new 创建新会话。`);
+      relaySend(`⏰ 会话 ${sessionId.slice(0, 8)}... 因长时间无活动已自动关闭。\n发送 /new 创建新会话。`);
     });
     cleanups.push(unsubIdleKill);
 
     // ── NEW: relaunch notification (CLI reconnection) ──
     const unsubRelaunch = companionBus.on("session:relaunch-needed", ({ sessionId: sid }) => {
       if (sid !== sessionId) return;
-      this.sendReply(userId, "🔄 会话正在重新连接...");
+      relaySend("🔄 会话正在重新连接...");
     });
     cleanups.push(unsubRelaunch);
 
@@ -1437,7 +1473,7 @@ export class WeChatBridge {
       if (sid !== sessionId) return;
       const formatted = formatRateLimitEvent(message as Record<string, unknown>);
       if (formatted) {
-        this.sendReply(userId, formatted);
+        relaySend(formatted);
       }
     });
     cleanups.push(unsubRateLimit);
@@ -1448,6 +1484,8 @@ export class WeChatBridge {
   private cleanupRelay(sessionId: string): void {
     const relayData = this.sessionRelayData.get(sessionId);
     if (relayData) {
+      // Stop heartbeat timer
+      this.stopHeartbeat(sessionId);
       // Flush any buffered tool notifications before cleaning up
       if (relayData.toolNotifyBuffer.length > 0) {
         const userId = this.userIdBySession.get(sessionId);
@@ -1473,6 +1511,59 @@ export class WeChatBridge {
     relayData.toolNotifyBuffer = [];
     relayData.toolNotifyTimer = null;
     this.sendReply(userId, merged);
+    relayData.lastUserFacingMessageTs = Date.now();
+  }
+
+  /** Start the progress heartbeat for a session. Resets on each user-facing message. */
+  private startHeartbeat(sessionId: string, userId: string): void {
+    const relayData = this.sessionRelayData.get(sessionId);
+    if (!relayData) return;
+    // Clear any existing timer
+    if (relayData.heartbeatTimer) {
+      clearTimeout(relayData.heartbeatTimer);
+    }
+    relayData.heartbeatTimer = setTimeout(() => {
+      this.fireHeartbeat(sessionId, userId);
+    }, HEARTBEAT_INITIAL_DELAY_MS);
+  }
+
+  /** Fire a progress heartbeat and schedule the next one.
+   *  Only sends if no user-facing message was sent recently (within HEARTBEAT_INTERVAL_MS).
+   *  This avoids sending heartbeats right after tool notifications or other relay messages. */
+  private fireHeartbeat(sessionId: string, userId: string): void {
+    const relayData = this.sessionRelayData.get(sessionId);
+    if (!relayData) return;
+    relayData.heartbeatTimer = null;
+    const now = Date.now();
+    // If a user-facing message was sent recently, just reschedule
+    if (now - relayData.lastUserFacingMessageTs < HEARTBEAT_INTERVAL_MS) {
+      relayData.heartbeatTimer = setTimeout(() => {
+        this.fireHeartbeat(sessionId, userId);
+      }, HEARTBEAT_INTERVAL_MS);
+      return;
+    }
+    const elapsed = Math.round((now - relayData.turnStartTime) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
+    const toolHint = relayData.lastActiveToolName
+      ? ` (${relayData.lastActiveToolName})`
+      : "";
+    this.sendReply(userId, `⏳ 仍在处理中${toolHint}... 已用时 ${timeStr}`);
+    relayData.lastUserFacingMessageTs = now;
+    // Schedule next heartbeat
+    relayData.heartbeatTimer = setTimeout(() => {
+      this.fireHeartbeat(sessionId, userId);
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  /** Stop the progress heartbeat for a session. */
+  private stopHeartbeat(sessionId: string): void {
+    const relayData = this.sessionRelayData.get(sessionId);
+    if (relayData?.heartbeatTimer) {
+      clearTimeout(relayData.heartbeatTimer);
+      relayData.heartbeatTimer = null;
+    }
   }
 
   /**
@@ -1591,7 +1682,7 @@ export class WeChatBridge {
   private getActiveSessionId(userId: string): string | null {
     const userSession = this.userSessions.get(userId);
     if (!userSession || userSession.sessionIds.length === 0) {
-      this.sendReply(userId, "No active session. Send /new to create one.");
+      this.sendReply(userId, "没有活跃的会话，发送 /new 创建新会话。");
       return null;
     }
     return userSession.sessionIds[userSession.activeSessionIndex] ?? null;

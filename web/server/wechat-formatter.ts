@@ -402,7 +402,10 @@ export function formatToolProgress(
 ): string {
   if (elapsedSeconds < minSeconds) return "";
   const label = TOOL_VERB_MAP[toolName]?.verb ?? toolName;
-  return `⏳ ${label} 已运行 ${Math.round(elapsedSeconds)}s`;
+  const mins = Math.floor(elapsedSeconds / 60);
+  const secs = Math.round(elapsedSeconds % 60);
+  const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
+  return `⏳ ${label} 已运行 ${timeStr}`;
 }
 
 /** Format an AI auto-resolved permission for WeChat display. */

@@ -649,7 +649,7 @@ describe("formatAuthStatus", () => {
 describe("formatToolProgress", () => {
   it("formats progress for tool running > 30s", () => {
     const result = formatToolProgress("Bash", "tool-123", 45);
-    expect(result).toBe("⏳ 运行 已运行 45s");
+    expect(result).toBe("⏳ 运行 已运行 45秒");
   });
 
   it("returns empty for tool running < 30s", () => {
@@ -659,7 +659,7 @@ describe("formatToolProgress", () => {
 
   it("returns empty for tool running exactly 30s (boundary)", () => {
     const result = formatToolProgress("Bash", "tool-123", 30);
-    expect(result).toBe("⏳ 运行 已运行 30s");
+    expect(result).toBe("⏳ 运行 已运行 30秒");
   });
 
   it("uses custom minSeconds threshold", () => {
@@ -669,12 +669,22 @@ describe("formatToolProgress", () => {
 
   it("uses known tool verb for display", () => {
     const result = formatToolProgress("Read", "tool-456", 35);
-    expect(result).toBe("⏳ 读取 已运行 35s");
+    expect(result).toBe("⏳ 读取 已运行 35秒");
   });
 
   it("falls back to tool name for unknown tools", () => {
     const result = formatToolProgress("CustomTool", "tool-789", 40);
-    expect(result).toBe("⏳ CustomTool 已运行 40s");
+    expect(result).toBe("⏳ CustomTool 已运行 40秒");
+  });
+
+  it("formats elapsed time in minutes and seconds for > 60s", () => {
+    const result = formatToolProgress("Bash", "tool-123", 125);
+    expect(result).toBe("⏳ 运行 已运行 2分5秒");
+  });
+
+  it("formats exactly 60 seconds as 1分0秒", () => {
+    const result = formatToolProgress("Bash", "tool-123", 60);
+    expect(result).toBe("⏳ 运行 已运行 1分0秒");
   });
 });
 
