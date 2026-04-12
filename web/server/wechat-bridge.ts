@@ -1920,6 +1920,7 @@ export class WeChatBridge {
   private async drainSendQueue(): Promise<void> {
     if (this.sending) return; // already draining
     this.sending = true;
+    let deferred = false; // set when a delayed re-drain is already scheduled via setTimeout
     try {
       while (this.sendQueue.length > 0) {
         // Pick the first priority item, or fall back to the head of the queue
@@ -1930,6 +1931,7 @@ export class WeChatBridge {
           console.warn("[wechat] Bot not running, requeuing message");
           this.sendQueue.unshift(item);
           setTimeout(() => this.drainSendQueue(), 5_000);
+          deferred = true;
           return;
         }
 
@@ -1940,6 +1942,7 @@ export class WeChatBridge {
           const waitMs = this.rateLimitCoolDownUntil - now;
           console.warn(`[wechat] Rate-limit cooldown active, pausing queue for ${Math.ceil(waitMs / 1000)}s`);
           setTimeout(() => this.drainSendQueue(), waitMs);
+          deferred = true;
           return;
         }
 
@@ -1995,8 +1998,9 @@ export class WeChatBridge {
       }
     } finally {
       this.sending = false;
-      // Re-check: a message may have been enqueued during the last await
-      if (this.sendQueue.length > 0) {
+      // Re-check: a message may have been enqueued during the last await.
+      // Skip if a delayed re-drain (bot-not-running or rate-limit cooldown) is already scheduled.
+      if (!deferred && this.sendQueue.length > 0) {
         this.drainSendQueue();
       }
     }
