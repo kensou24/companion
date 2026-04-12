@@ -312,7 +312,7 @@ export class WeChatBridge {
   // Critical messages (permission requests, AskUserQuestion) use priority=true
   // to jump to the front of the queue, ensuring they are delivered before
   // ordinary tool notifications and result text.
-  private sendQueue: Array<{ userId: string; text: string; priority?: boolean }> = [];
+  private sendQueue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (result: "ok" | "failed") => void }> = [];
   private sending = false;
   // Critical message retry queue: messages that could not be delivered because
   // the bot was down. Flushed on bot reconnect. Prevents permission/AskUserQuestion
@@ -405,6 +405,7 @@ export class WeChatBridge {
   stop(): void {
     this.intentionalStop = true;
     this.clearReconnectTimer();
+    this.clearCriticalRetryTimer();
     if (!this.bot) return;
     try {
       this.bot.stop();
@@ -1853,6 +1854,10 @@ export class WeChatBridge {
    * priority queue. Returns true if sent successfully (or queued for retry).
    * On failure, the message is queued in criticalPending for delivery after
    * bot reconnect — permission messages are never permanently lost.
+   *
+   * IMPORTANT: This enqueues into the serialized sendQueue rather than calling
+   * bot.send() directly, so that all sends go through a single serialized path
+   * and never execute concurrently.
    */
   private async sendCriticalReply(userId: string, text: string, context: string): Promise<boolean> {
     if (!this.bot?.isRunning) {
@@ -1863,30 +1868,28 @@ export class WeChatBridge {
       return false;
     }
 
+    // Enqueue all chunks as priority items and wait for them to be drained.
+    // We create a promise per chunk so the caller can await the result while
+    // still going through the serialized drainSendQueue path.
     const chunks = splitForWeChat(text);
+    const settled: Array<"ok" | "failed"> = [];
     for (const chunk of chunks) {
-      const maxRetries = 5;
-      let sent = false;
-      for (let attempt = 0; attempt <= maxRetries; attempt++) {
-        try {
-          await this.bot.send(userId, chunk);
-          sent = true;
-          break;
-        } catch (err) {
-          if (attempt < maxRetries) {
-            console.warn(`[wechat] Critical send failed (${context}, attempt ${attempt + 1}/${maxRetries + 1}), retrying...`, err);
-            await new Promise((r) => setTimeout(r, 1_000 * (attempt + 1)));
-          } else {
-            console.error(`[wechat] CRITICAL: Failed to deliver ${context} after ${maxRetries + 1} attempts`, err);
-          }
-        }
-      }
-      if (!sent) {
-        // All retries failed — queue for later instead of permanently losing
-        this.criticalPending.push({ userId, text: chunk, context });
-        this.scheduleCriticalRetry();
-        return false;
-      }
+      this.sendQueue.push({ userId, text: chunk, priority: true, _resolve: (result) => settled.push(result) });
+    }
+    this.drainSendQueue();
+
+    // drainSendQueue is async — poll until all chunks have settled.
+    // This is safe because drainSendQueue serializes all sends and resolves
+    // each chunk's callback inline.
+    while (settled.length < chunks.length) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    if (settled.includes("failed")) {
+      // At least one chunk failed after retries — queue entire message for later
+      this.criticalPending.push({ userId, text, context });
+      this.scheduleCriticalRetry();
+      return false;
     }
     return true;
   }
@@ -1898,12 +1901,8 @@ export class WeChatBridge {
     try {
       while (this.sendQueue.length > 0) {
         // Pick the first priority item, or fall back to the head of the queue
-        let item = this.sendQueue.find((m) => m.priority);
-        if (item) {
-          this.sendQueue.splice(this.sendQueue.indexOf(item), 1);
-        } else {
-          item = this.sendQueue.shift()!;
-        }
+        const prioIdx = this.sendQueue.findIndex((m) => m.priority);
+        const item = prioIdx >= 0 ? this.sendQueue.splice(prioIdx, 1)[0] : this.sendQueue.shift()!;
 
         if (!this.bot?.isRunning) {
           console.warn("[wechat] Bot not running, requeuing message");
@@ -1913,9 +1912,11 @@ export class WeChatBridge {
         }
 
         const maxRetries = item.priority ? 5 : 2;
+        let sent = false;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
             await this.bot.send(item.userId, item.text);
+            sent = true;
             break; // success
           } catch (err) {
             if (attempt < maxRetries) {
@@ -1926,9 +1927,22 @@ export class WeChatBridge {
             }
           }
         }
+        item._resolve?.(sent ? "ok" : "failed");
       }
     } finally {
       this.sending = false;
+      // Re-check: a message may have been enqueued during the last await
+      if (this.sendQueue.length > 0) {
+        this.drainSendQueue();
+      }
+    }
+  }
+
+  /** Clear the critical retry timer (called on stop). */
+  private clearCriticalRetryTimer(): void {
+    if (this.criticalRetryTimer !== null) {
+      clearTimeout(this.criticalRetryTimer);
+      this.criticalRetryTimer = null;
     }
   }
 
