@@ -4200,6 +4200,58 @@ describe("per-session listener error handling", () => {
   });
 });
 
+// ─── injectUserMessage with images ──────────────────────────────────────────
+
+describe("injectUserMessage with images", () => {
+  it("passes images through to the adapter", async () => {
+    // When injectUserMessage is called with images, the adapter should
+    // receive a user_message with the images field populated.
+    const sessionId = "img-session";
+    const cli = makeCliSocket(sessionId);
+    bridge.handleCLIOpen(cli, sessionId);
+
+    const initMsg = makeInitMsg();
+    await bridge.handleCLIMessage(cli, initMsg);
+
+    const images = [{ media_type: "image/png", data: "base64data" }];
+    bridge.injectUserMessage(sessionId, "describe this image", images);
+
+    // Find the NDJSON message sent to the CLI
+    const sends = cli.send.mock.calls.map((c: [string]) => c[0]);
+    const userMsg = sends.map((s: string) => JSON.parse(s)).find((m: Record<string, unknown>) => m.type === "user");
+
+    expect(userMsg).toBeDefined();
+    expect(userMsg.message.role).toBe("user");
+    // Content should be an array with image + text blocks
+    const content = userMsg.message.content;
+    expect(Array.isArray(content)).toBe(true);
+    expect(content).toHaveLength(2);
+    expect(content[0]).toEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: "base64data" },
+    });
+    expect(content[1]).toEqual({ type: "text", text: "describe this image" });
+  });
+
+  it("works without images (backward compatible)", async () => {
+    const sessionId = "no-img-session";
+    const cli = makeCliSocket(sessionId);
+    bridge.handleCLIOpen(cli, sessionId);
+
+    const initMsg = makeInitMsg();
+    await bridge.handleCLIMessage(cli, initMsg);
+
+    bridge.injectUserMessage(sessionId, "hello");
+
+    const sends = cli.send.mock.calls.map((c: [string]) => c[0]);
+    const userMsg = sends.map((s: string) => JSON.parse(s)).find((m: Record<string, unknown>) => m.type === "user");
+
+    expect(userMsg).toBeDefined();
+    // Without images, content is a plain string
+    expect(userMsg.message.content).toBe("hello");
+  });
+});
+
 // ─── sendToCLI error handling ──────────────────────────────────────────────
 
 describe("sendToCLI error path", () => {

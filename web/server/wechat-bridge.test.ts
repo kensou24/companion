@@ -1,6 +1,6 @@
 // Tests for wechat-bridge.ts — command parsing, dangerous tool detection, helpers
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { parseCommand, isDangerousTool, extractToolResults, formatSingleQuestion, formatSessionName, isRateLimitError } from "./wechat-bridge.js";
+import { parseCommand, isDangerousTool, extractToolResults, formatSingleQuestion, formatSessionName, isRateLimitError, isVisionModel } from "./wechat-bridge.js";
 import { companionBus } from "./event-bus.js";
 
 // ── parseCommand ──────────────────────────────────────────────────────────
@@ -2584,5 +2584,27 @@ describe("Rate-limit backoff in drainSendQueue", () => {
     const maxRetries = false ? 5 : 2; // priority=false
     expect(maxRetries).toBe(2);
     expect(maxRetries + 1).toBe(3); // total attempts
+  });
+});
+
+// ── isVisionModel ──────────────────────────────────────────────────────────
+
+describe("isVisionModel", () => {
+  it("returns true for Claude model names", () => {
+    expect(isVisionModel("claude-sonnet-4-6")).toBe(true);
+    expect(isVisionModel("claude-opus-4-7")).toBe(true);
+    expect(isVisionModel("claude-haiku-4-5-20251001")).toBe(true);
+    expect(isVisionModel("Claude-Sonnet-4-6")).toBe(true);
+  });
+
+  it("returns false for non-Claude model names", () => {
+    expect(isVisionModel("gpt-4o")).toBe(false);
+    expect(isVisionModel("codex-mini")).toBe(false);
+    expect(isVisionModel("o3")).toBe(false);
+    expect(isVisionModel("gemini-2.0-flash")).toBe(false);
+  });
+
+  it("returns false for empty or undefined-like inputs", () => {
+    expect(isVisionModel("")).toBe(false);
   });
 });

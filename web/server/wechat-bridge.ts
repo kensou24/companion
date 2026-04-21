@@ -10,6 +10,7 @@ import { companionBus } from "./event-bus.js";
 import { getSettings } from "./settings-manager.js";
 import { join, resolve, isAbsolute } from "node:path";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { COMPANION_HOME } from "./paths.js";
 import QRCode from "qrcode";
 import { formatToolCall, formatPermissionRequest, formatMarkdown, splitForWeChat, formatToolSummary, formatToolCallFailure, formatAskUserQuestion, formatSystemEvent, formatStatusChange, formatAuthStatus, formatToolProgress, formatPermissionAutoResolved, formatSessionPhase, formatPromptSuggestions, formatRateLimitEvent, formatToolResultPreview } from "./wechat-formatter.js";
@@ -72,6 +73,9 @@ const SEND_MIN_INTERVAL_MS = 2_000;
 const RATE_LIMIT_COOLDOWN_MS = 10_000;
 // Maximum exponential backoff cap for rate-limit retries
 const RATE_LIMIT_MAX_BACKOFF_MS = 60_000;
+
+const IMAGE_MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB base64-encoded limit
+const WECHAT_IMAGE_DIR = join(tmpdir(), "companion-wechat");
 
 const PERSIST_PATH = join(COMPANION_HOME, "wechat-sessions.json");
 
@@ -221,6 +225,13 @@ export function isRateLimitError(err: unknown): boolean {
   return /ret\s*=\s*-2/i.test(s);
 }
 
+/** Check if a model name supports vision/image content blocks. */
+export function isVisionModel(model: string): boolean {
+  if (!model) return false;
+  const m = model.toLowerCase();
+  return m.includes("claude");
+}
+
 export function extractToolResults(msg: BrowserIncomingMessage): Array<{ tool_use_id: string; content: string; is_error: boolean }> {
   if (msg.type !== "assistant") return [];
   const raw = msg as Record<string, unknown>;
@@ -325,7 +336,10 @@ export class WeChatBridge {
   // Critical messages (permission requests, AskUserQuestion) use priority=true
   // to jump to the front of the queue, ensuring they are delivered before
   // ordinary tool notifications and result text.
-  private sendQueue: Array<{ userId: string; text: string; priority?: boolean; _resolve?: (result: "ok" | "failed") => void }> = [];
+  private sendQueue: Array<
+    | { kind: "text"; userId: string; text: string; priority?: boolean; _resolve?: (result: "ok" | "failed") => void }
+    | { kind: "image"; userId: string; image: Buffer; caption?: string; _resolve?: (result: "ok" | "failed") => void }
+  > = [];
   private sending = false;
   // Critical message retry queue: messages that could not be delivered because
   // the bot was down. Flushed on bot reconnect. Prevents permission/AskUserQuestion
@@ -388,7 +402,10 @@ export class WeChatBridge {
       },
     });
 
-    this.bot.onMessage(async (msg: { userId: string; text: string; type: string }) => {
+    this.bot.onMessage(async (msg: {
+      userId: string; text: string; type: string;
+      images?: Array<{ url?: string; width?: number; height?: number }>;
+    }) => {
       try {
         await this.handleMessage(msg);
       } catch (err) {
@@ -526,11 +543,15 @@ export class WeChatBridge {
 
   // ── Message Handling ──────────────────────────────────────────────────
 
-  private async handleMessage(msg: { userId: string; text: string; type: string }): Promise<void> {
+  private async handleMessage(msg: {
+    userId: string; text: string; type: string;
+    images?: Array<{ url?: string; width?: number; height?: number }>;
+  }): Promise<void> {
     const { userId, text, type } = msg;
 
-    // Only handle text messages for now
-    if (type !== "text" || !text.trim()) return;
+    // Handle text and image messages; drop everything else
+    if (type !== "text" && type !== "image") return;
+    if (type === "text" && !text.trim()) return;
 
     // Check user whitelist
     const settings = getSettings();
@@ -540,6 +561,12 @@ export class WeChatBridge {
         await this.sendReply(userId, "⛔ 权限不足，请联系管理员添加你的微信ID。");
         return;
       }
+    }
+
+    // Route image messages to dedicated handler
+    if (type === "image") {
+      await this.handleImageMessage(userId, msg);
+      return;
     }
 
     // Parse commands BEFORE AskUserQuestion interceptor so /allow, /deny, /interrupt
@@ -603,6 +630,93 @@ export class WeChatBridge {
       relayData.lastActiveToolName = "";
       this.startHeartbeat(sessionId, userId);
     }
+  }
+
+  /** Handle incoming image messages from WeChat users. */
+  private async handleImageMessage(userId: string, msg: {
+    userId: string; text: string; type: string;
+    images?: Array<{ url?: string; width?: number; height?: number }>;
+  }): Promise<void> {
+    const userSession = this.getOrCreateUserSession(userId);
+    const sessionId = userSession.sessionIds[userSession.activeSessionIndex];
+
+    if (!sessionId) {
+      await this.sendReply(userId, "没有活跃的会话，发送 /new 创建新会话。");
+      return;
+    }
+
+    const session = this.wsBridge.getSession(sessionId);
+    if (!session) {
+      this.removeSessionFromUser(userId, sessionId);
+      await this.sendReply(userId, "会话已过期，发送 /new 创建新会话。");
+      return;
+    }
+
+    this.ensureRelay(sessionId, userId);
+    await this.sendTyping(userId);
+
+    // Download image from WeChat CDN
+    let buffer: Buffer;
+    let mediaType: string;
+    try {
+      const downloaded = await this.bot.download(msg);
+      if (!downloaded?.data) {
+        await this.sendReply(userId, "❌ 下载图片失败，请重试。");
+        return;
+      }
+      buffer = downloaded.data;
+      // Normalize MIME type: SDK may return "jpeg", "image/jpeg", etc.
+      const rawType = downloaded.type || "jpeg";
+      mediaType = rawType.startsWith("image/") ? rawType : `image/${rawType}`;
+    } catch (err) {
+      console.error("[wechat] Failed to download image:", err);
+      await this.sendReply(userId, "❌ 下载图片失败，请重试。");
+      return;
+    }
+
+    // Size guard
+    const base64Size = Math.ceil(buffer.length * 4 / 3);
+    if (base64Size > IMAGE_MAX_SIZE_BYTES) {
+      await this.sendReply(userId, `❌ 图片太大（${Math.round(buffer.length / 1024 / 1024)}MB），请发送小于10MB的图片。`);
+      return;
+    }
+
+    const text = msg.text?.trim() || "请描述这张图片";
+
+    if (this.checkVisionModel(session.state.model)) {
+      // Vision-capable model: send image blocks directly
+      const base64 = buffer.toString("base64");
+      this.wsBridge.injectUserMessage(sessionId, text, [{ media_type: mediaType, data: base64 }]);
+    } else {
+      // Non-vision model: save to temp file and inject text prompt
+      const ext = mediaType.split("/")[1] || "jpg";
+      const fileName = `${sessionId}_${Date.now()}.${ext}`;
+      const filePath = join(WECHAT_IMAGE_DIR, fileName);
+      try {
+        mkdirSync(WECHAT_IMAGE_DIR, { recursive: true });
+        writeFileSync(filePath, buffer);
+      } catch (err) {
+        console.error("[wechat] Failed to save image to temp file:", err);
+        await this.sendReply(userId, "❌ 图片保存失败，请重试。");
+        return;
+      }
+      const prompt = `用户发送了一张图片，保存在: ${filePath}\n\n请使用可用的工具分析这张图片。\n\n${text}`;
+      this.wsBridge.injectUserMessage(sessionId, prompt);
+    }
+
+    // Start progress heartbeat for this turn
+    const relayData = this.sessionRelayData.get(sessionId);
+    if (relayData) {
+      relayData.turnStartTime = Date.now();
+      relayData.lastUserFacingMessageTs = Date.now();
+      relayData.lastActiveToolName = "";
+      this.startHeartbeat(sessionId, userId);
+    }
+  }
+
+  /** Check if the session's model supports vision/image content blocks. */
+  private checkVisionModel(model: string): boolean {
+    return isVisionModel(model);
   }
 
   private async handleCommand(userId: string, cmd: string, args: string): Promise<void> {
@@ -1857,11 +1971,17 @@ export class WeChatBridge {
     const chunks = splitForWeChat(text);
     for (const chunk of chunks) {
       if (critical) {
-        this.sendQueue.push({ userId, text: chunk, priority: true });
+        this.sendQueue.push({ kind: "text", userId, text: chunk, priority: true });
       } else {
-        this.sendQueue.push({ userId, text: chunk });
+        this.sendQueue.push({ kind: "text", userId, text: chunk });
       }
     }
+    this.drainSendQueue();
+  }
+
+  /** Queue an image for delivery to a WeChat user. */
+  private sendImageReply(userId: string, image: Buffer, caption?: string): void {
+    this.sendQueue.push({ kind: "image", userId, image, caption });
     this.drainSendQueue();
   }
 
@@ -1890,7 +2010,7 @@ export class WeChatBridge {
     const chunks = splitForWeChat(text);
     const settled: Array<"ok" | "failed"> = [];
     for (const chunk of chunks) {
-      this.sendQueue.push({ userId, text: chunk, priority: true, _resolve: (result) => settled.push(result) });
+      this.sendQueue.push({ kind: "text", userId, text: chunk, priority: true, _resolve: (result) => settled.push(result) });
     }
     this.drainSendQueue();
 
@@ -1923,8 +2043,8 @@ export class WeChatBridge {
     let deferred = false; // set when a delayed re-drain is already scheduled via setTimeout
     try {
       while (this.sendQueue.length > 0) {
-        // Pick the first priority item, or fall back to the head of the queue
-        const prioIdx = this.sendQueue.findIndex((m) => m.priority);
+        // Pick the first priority text item, or fall back to the head of the queue
+        const prioIdx = this.sendQueue.findIndex((m) => m.kind === "text" && m.priority);
         const item = prioIdx >= 0 ? this.sendQueue.splice(prioIdx, 1)[0] : this.sendQueue.shift()!;
 
         if (!this.bot?.isRunning) {
@@ -1952,12 +2072,19 @@ export class WeChatBridge {
           await new Promise((r) => setTimeout(r, SEND_MIN_INTERVAL_MS - sinceLast));
         }
 
-        const maxRetries = item.priority ? 5 : 2;
+        const isImageItem = item.kind === "image";
+        const maxRetries = (!isImageItem && (item as { priority?: boolean }).priority) ? 5 : 2;
         let sent = false;
         let rateLimitHit = false;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
-            await this.bot.send(item.userId, item.text);
+            if (isImageItem) {
+              const imgItem = item as { kind: "image"; userId: string; image: Buffer; caption?: string; _resolve?: (result: "ok" | "failed") => void };
+              await this.bot.send(imgItem.userId, { image: imgItem.image, caption: imgItem.caption });
+            } else {
+              const txtItem = item as { kind: "text"; userId: string; text: string; _resolve?: (result: "ok" | "failed") => void };
+              await this.bot.send(txtItem.userId, txtItem.text);
+            }
             sent = true;
             this.lastSendTs = Date.now();
             break; // success
@@ -2034,7 +2161,7 @@ export class WeChatBridge {
     // Re-inject into the priority queue
     while (this.criticalPending.length > 0) {
       const item = this.criticalPending.shift()!;
-      this.sendQueue.push({ userId: item.userId, text: item.text, priority: true });
+      this.sendQueue.push({ kind: "text", userId: item.userId, text: item.text, priority: true });
     }
     this.drainSendQueue();
   }

@@ -1003,14 +1003,14 @@ export class WsBridge {
   }
 
   /** Send a user message into a session programmatically (no browser required).
-   *  Used by the cron scheduler and agent executor to send prompts to autonomous sessions. */
-  injectUserMessage(sessionId: string, content: string): void {
+   *  Used by the cron scheduler, agent executor, and WeChat bridge to send prompts to sessions. */
+  injectUserMessage(sessionId: string, content: string, images?: { media_type: string; data: string }[]): void {
     const session = this.sessions.get(sessionId);
     if (!session) {
       console.error(`[ws-bridge] Cannot inject message: session ${sessionId} not found`);
       return;
     }
-    this.routeBrowserMessage(session, { type: "user_message", content });
+    this.routeBrowserMessage(session, { type: "user_message", content, ...(images?.length ? { images } : {}) });
   }
 
   /** Send a permission response into a session programmatically (no browser required).
