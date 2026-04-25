@@ -12,7 +12,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="MIT License" /></a>
 </p>
 
-## Quick start
+---
+
+## Quick Start
 
 **Requirements:** [Bun](https://bun.sh) + [Claude Code](https://docs.anthropic.com/en/docs/claude-code) and/or [Codex](https://github.com/openai/codex) CLI.
 
@@ -38,13 +40,13 @@ the-companion start
 
 Open [http://localhost:3456](http://localhost:3456). The server runs in the background and survives reboots.
 
-## CLI commands
+### CLI Commands
 
 | Command | Description |
 |---|---|
 | `the-companion` | Start server in foreground (default) |
 | `the-companion serve` | Start server in foreground (explicit) |
-| `the-companion install` | Register as a background service (launchd/systemd) |
+| `the-companion install` | Register as a background service |
 | `the-companion start` | Start the background service |
 | `the-companion stop` | Stop the background service |
 | `the-companion restart` | Restart the background service |
@@ -54,32 +56,27 @@ Open [http://localhost:3456](http://localhost:3456). The server runs in the back
 
 **Options:** `--port <n>` overrides the default port (3456).
 
-## Why this is useful
-- **Parallel sessions**: work on multiple tasks without juggling terminals.
-- **Full visibility**: see streaming output, tool calls, and tool results in one timeline.
-- **Permission control**: approve/deny sensitive operations from the UI.
-- **Session recovery**: restore work after process/server restarts.
-- **Dual-engine support**: designed for both Claude Code and Codex-backed flows.
+---
+
+## Features
+
+- **Parallel sessions** — work on multiple tasks without juggling terminals
+- **Full visibility** — see streaming output, tool calls, and tool results in one timeline
+- **Permission control** — approve/deny sensitive operations from the UI
+- **Session recovery** — restore work after process/server restarts
+- **Dual-engine support** — designed for both Claude Code and Codex
 
 ## Screenshots
+
 | Chat + tool timeline | Permission flow |
 |---|---|
 | <img src="screenshot.png" alt="Main workspace" width="100%" /> | <img src="web/docs/screenshots/notification-section.png" alt="Permission and notifications" width="100%" /> |
 
-## Architecture (simple)
-```text
-Browser (React)
-  <-> ws://localhost:3456/ws/browser/:session
-Companion server (Bun + Hono)
-  <-> ws://localhost:3456/ws/cli/:session
-Claude Code / Codex CLI
-```
-
-The bridge uses the CLI `--sdk-url` websocket path and NDJSON events.
+---
 
 ## Authentication
 
-The server auto-generates an auth token on first start, stored at `~/.companion/auth.json`. You can also manage tokens manually:
+The server auto-generates an auth token on first start, stored at `~/.companion/auth.json`.
 
 ```bash
 # Show the current token (or auto-generate one)
@@ -95,55 +92,15 @@ Or set a token via environment variable (takes priority over the file):
 COMPANION_AUTH_TOKEN="my-secret-token" bunx the-companion
 ```
 
-## Development
-```bash
-make dev
-```
+---
 
-Manual:
-```bash
-cd web
-bun install
-bun run dev
-```
+## Integrations
 
-Checks:
-```bash
-cd web
-bun run typecheck
-bun run test
-```
-
-## Preview / Prerelease
-
-Every push to `main` publishes a preview artifact:
-
-| Artifact | Tag / dist-tag | Example |
-|---|---|---|
-| Docker image (moving) | `preview-main` | `docker.io/stangirard/the-companion:preview-main` |
-| Docker image (immutable) | `preview-<sha>` | `docker.io/stangirard/the-companion:preview-abc1234...` |
-| npm package | `next` | `bunx the-companion@next` |
-
-Preview builds use a patch-core bump (e.g. `0.68.1-preview.*` when stable is `0.68.0`) so the in-app update checker can detect them as semver-ahead of the current stable release. They are **not** production-stable — use `latest` / semver tags for stable releases.
-
-### Tracking prerelease updates in-app
-
-In **Settings > Updates**, switch the update channel to **Prerelease** to receive preview builds. The default channel is **Stable** (semver releases only). Switching channels takes effect immediately on the next update check.
-
-## WeChat Bot
+### WeChat Bot
 
 Control your sessions directly from WeChat — no browser needed.
 
-**Features:**
-- Create and manage sessions via WeChat messages
-- Approve/deny tool permissions from your phone
-- Switch models and permission modes
-- Auto-approve safe tools (Read, Glob, Grep) + forward dangerous ones for approval
-
-**Setup:**
-1. Navigate to **Integrations** → **WeChat Bot** (or `#/integrations/wechat`)
-2. Click **Start** and scan the QR code with WeChat
-3. Configure options (auto-approve safe tools, forward dangerous permissions)
+**Setup:** Navigate to **Integrations → WeChat Bot** (or `#/integrations/wechat`), click **Start**, and scan the QR code.
 
 **Commands:**
 
@@ -161,10 +118,42 @@ Control your sessions directly from WeChat — no browser needed.
 
 See [`docs/wechat-bot.md`](docs/wechat-bot.md) for full documentation.
 
-## Docs
-- **Full documentation**: [`docs/`](docs/) (Mintlify — run `cd docs && mint dev` to preview locally)
-- Protocol reverse engineering: [`WEBSOCKET_PROTOCOL_REVERSED.md`](WEBSOCKET_PROTOCOL_REVERSED.md)
-- Contributor and architecture guide: [`CLAUDE.md`](CLAUDE.md)
+---
+
+## Architecture
+
+```text
+Browser (React)
+  ↔ ws://localhost:3456/ws/browser/:session
+Companion server (Bun + Hono)
+  ↔ ws://localhost:3456/ws/cli/:session
+Claude Code / Codex CLI
+```
+
+The bridge uses the CLI `--sdk-url` websocket path and NDJSON events. See [`WEBSOCKET_PROTOCOL_REVERSED.md`](WEBSOCKET_PROTOCOL_REVERSED.md) for protocol details.
+
+---
+
+## Development
+
+```bash
+# Start dev server (Hono backend + Vite HMR)
+make dev
+
+# Or manually
+cd web && bun install && bun run dev
+
+# Type checking
+cd web && bun run typecheck
+
+# Tests
+cd web && bun run test
+```
+
+See [`CLAUDE.md`](CLAUDE.md) for contributor guidelines and full architecture documentation.
+
+---
 
 ## License
+
 MIT
