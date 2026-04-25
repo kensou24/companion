@@ -11,22 +11,22 @@ type ToolInput = Record<string, unknown>;
 export function formatToolCall(toolName: string, input: ToolInput): string {
   switch (toolName) {
     case "Bash":
-      return `🔧 执行: ${truncate(String(input.command ?? ""), TOOL_DISPLAY_LIMIT)}`;
+      return `🔧 执行 · ${truncate(String(input.command ?? ""), TOOL_DISPLAY_LIMIT)}`;
     case "Read":
-      return `📖 读取: ${truncate(String(input.file_path ?? ""), TOOL_DISPLAY_LIMIT)}`;
+      return `📖 读取 · ${truncate(String(input.file_path ?? ""), TOOL_DISPLAY_LIMIT)}`;
     case "Write":
-      return `✏️ 写入: ${truncate(String(input.file_path ?? ""), TOOL_DISPLAY_LIMIT)}`;
+      return `✏️ 写入 · ${truncate(String(input.file_path ?? ""), TOOL_DISPLAY_LIMIT)}`;
     case "Edit":
-      return `📝 编辑: ${truncate(String(input.file_path ?? ""), TOOL_DISPLAY_LIMIT)}`;
+      return `📝 编辑 · ${truncate(String(input.file_path ?? ""), TOOL_DISPLAY_LIMIT)}`;
     case "Glob":
-      return `🔍 搜索文件: ${truncate(String(input.pattern ?? ""), TOOL_DISPLAY_LIMIT)}`;
+      return `🔍 搜索文件 · ${truncate(String(input.pattern ?? ""), TOOL_DISPLAY_LIMIT)}`;
     case "Grep":
-      return `🔍 搜索内容: ${truncate(String(input.pattern ?? ""), TOOL_DISPLAY_LIMIT)}`;
+      return `🔍 搜索内容 · ${truncate(String(input.pattern ?? ""), TOOL_DISPLAY_LIMIT)}`;
     case "WebSearch":
-      return `🌐 搜索: ${truncate(String(input.query ?? ""), TOOL_DISPLAY_LIMIT)}`;
+      return `🌐 搜索 · ${truncate(String(input.query ?? ""), TOOL_DISPLAY_LIMIT)}`;
     case "Agent": {
       const desc = input.description ?? input.prompt ?? "";
-      return `🤖 子任务: ${truncate(String(desc), TOOL_DISPLAY_LIMIT)}`;
+      return `🤖 子任务 · ${truncate(String(desc), TOOL_DISPLAY_LIMIT)}`;
     }
     case "TodoWrite":
     case "TodoRead":
@@ -38,7 +38,7 @@ export function formatToolCall(toolName: string, input: ToolInput): string {
       const mcpResult = formatMcpToolCall(toolName, input);
       if (mcpResult === null) return ""; // null = suppress
       if (mcpResult !== "") return mcpResult; // non-empty = formatted
-      return `🔧 ${toolName}: ${truncate(JSON.stringify(input), TOOL_DISPLAY_LIMIT)}`;
+      return `🔧 ${toolName} · ${truncate(JSON.stringify(input), TOOL_DISPLAY_LIMIT)}`;
     }
   }
 }
@@ -48,23 +48,23 @@ export function formatToolCall(toolName: string, input: ToolInput): string {
 function formatMcpToolCall(toolName: string, input: ToolInput): string | null {
   // context7: library documentation lookup
   if (toolName === "mcp__context7__resolve-library-id") {
-    return `📚 查找库: ${truncate(String(input.libraryName ?? input.query ?? ""), TOOL_DISPLAY_LIMIT)}`;
+    return `📚 查找库 · ${truncate(String(input.libraryName ?? input.query ?? ""), TOOL_DISPLAY_LIMIT)}`;
   }
   if (toolName === "mcp__context7__query-docs") {
-    return `📚 查询文档: ${truncate(String(input.query ?? ""), TOOL_DISPLAY_LIMIT)}`;
+    return `📚 查询文档 · ${truncate(String(input.query ?? ""), TOOL_DISPLAY_LIMIT)}`;
   }
   // Puppeteer: browser automation
   if (toolName.startsWith("mcp__puppeteer__")) {
     const action = toolName.split("__").pop() ?? "";
-    if (action === "puppeteer_navigate") return `🌐 打开页面: ${truncate(String(input.url ?? ""), TOOL_DISPLAY_LIMIT)}`;
-    if (action === "puppeteer_screenshot") return `📸 截图: ${truncate(String(input.name ?? ""), TOOL_DISPLAY_LIMIT)}`;
-    if (action === "puppeteer_click") return `👆 点击: ${truncate(String(input.selector ?? ""), TOOL_DISPLAY_LIMIT)}`;
-    if (action === "puppeteer_fill") return `⌨️ 填写: ${truncate(String(input.selector ?? ""), TOOL_DISPLAY_LIMIT)}`;
-    return `🌐 浏览器: ${action.replace("puppeteer_", "")}`;
+    if (action === "puppeteer_navigate") return `🌐 打开页面 · ${truncate(String(input.url ?? ""), TOOL_DISPLAY_LIMIT)}`;
+    if (action === "puppeteer_screenshot") return `📸 截图 · ${truncate(String(input.name ?? ""), TOOL_DISPLAY_LIMIT)}`;
+    if (action === "puppeteer_click") return `👆 点击 · ${truncate(String(input.selector ?? ""), TOOL_DISPLAY_LIMIT)}`;
+    if (action === "puppeteer_fill") return `⌨️ 填写 · ${truncate(String(input.selector ?? ""), TOOL_DISPLAY_LIMIT)}`;
+    return `🌐 浏览器 · ${action.replace("puppeteer_", "")}`;
   }
   // Sentry: error tracking
   if (toolName === "mcp__sentry__get_sentry_issue") {
-    return `🐛 Sentry: ${truncate(String(input.issue_id_or_url ?? ""), TOOL_DISPLAY_LIMIT)}`;
+    return `🐛 Sentry · ${truncate(String(input.issue_id_or_url ?? ""), TOOL_DISPLAY_LIMIT)}`;
   }
   // Sequential thinking
   if (toolName === "mcp__sequential-thinking__sequentialthinking") {
@@ -72,7 +72,7 @@ function formatMcpToolCall(toolName: string, input: ToolInput): string | null {
   }
   // Web reader
   if (toolName === "mcp__web_reader__webReader") {
-    return `🌐 读取网页: ${truncate(String(input.url ?? ""), TOOL_DISPLAY_LIMIT)}`;
+    return `🌐 读取网页 · ${truncate(String(input.url ?? ""), TOOL_DISPLAY_LIMIT)}`;
   }
   return "";
 }
@@ -89,8 +89,8 @@ export function formatPermissionRequest(
   input: ToolInput,
   description?: string,
 ): string {
-  const header = "⚠️ 需要批准操作:\n\n";
-  const footer = "\n\n回复 /y 批准 · /n 拒绝";
+  const header = "⚠️ 需要批准操作\n─────────────────\n";
+  const footer = "\n─────────────────\n💬 回复 /y 批准 · /n 拒绝";
   let body: string;
 
   switch (toolName) {
@@ -99,23 +99,23 @@ export function formatPermissionRequest(
       break;
     case "Write": {
       const content = String(input.content ?? "");
-      body = `写入文件: ${input.file_path ?? "?"}\n内容预览: ${truncate(content, 200)}`;
+      body = `写入文件 · ${input.file_path ?? "?"}\n内容预览: ${truncate(content, 200)}`;
       break;
     }
     case "Edit": {
       const oldStr = truncate(String(input.old_string ?? ""), 100);
       const newStr = truncate(String(input.new_string ?? ""), 100);
-      body = `编辑文件: ${input.file_path ?? "?"}\n替换: ${oldStr}\n→ ${newStr}`;
+      body = `编辑文件 · ${input.file_path ?? "??"}\n替换: ${oldStr}\n→ ${newStr}`;
       break;
     }
     case "Agent": {
       const desc = input.description ?? input.prompt ?? "";
-      body = `子任务: ${truncate(String(desc), 200)}`;
+      body = `子任务 · ${truncate(String(desc), 200)}`;
       break;
     }
     default: {
       const desc = description ?? JSON.stringify(input);
-      body = `${toolName}: ${truncate(desc, 200)}`;
+      body = `${toolName} · ${truncate(desc, 200)}`;
       break;
     }
   }
@@ -126,31 +126,32 @@ export function formatPermissionRequest(
 interface TextSegment {
   isCode: boolean;
   content: string;
+  language: string;
 }
 
 /** Split text into alternating code/non-code segments. */
 function splitCodeBlocks(text: string): TextSegment[] {
   const segments: TextSegment[] = [];
-  const regex = /```[\w]*\n([\s\S]*?)```/g;
+  const regex = /```(\w*)\n([\s\S]*?)```/g;
   let lastIndex = 0;
   let match: RegExpExecArray | null;
 
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) {
       const nonCode = text.slice(lastIndex, match.index).trim();
-      if (nonCode) segments.push({ isCode: false, content: nonCode });
+      if (nonCode) segments.push({ isCode: false, content: nonCode, language: "" });
     }
-    segments.push({ isCode: true, content: match[1].trimEnd() });
+    segments.push({ isCode: true, content: match[2].trimEnd(), language: match[1] ?? "" });
     lastIndex = match.index + match[0].length;
   }
 
   if (lastIndex < text.length) {
     const remaining = text.slice(lastIndex).trim();
-    if (remaining) segments.push({ isCode: false, content: remaining });
+    if (remaining) segments.push({ isCode: false, content: remaining, language: "" });
   }
 
   if (segments.length === 0) {
-    segments.push({ isCode: false, content: text });
+    segments.push({ isCode: false, content: text, language: "" });
   }
 
   return segments;
@@ -164,10 +165,12 @@ export function formatMarkdown(text: string): string {
 
   return segments.map((seg) => {
     if (seg.isCode) {
-      return seg.content
+      const lines = seg.content
         .split("\n")
         .map((line) => `  │ ${line}`)
         .join("\n");
+      const langLabel = seg.language ? `  ┌─ ${seg.language} ─` : "  ┌───────────";
+      return `${langLabel}\n${lines}\n  └───────────`;
     }
     return seg.content
       .replace(/^### (.+)$/gm, "━━ $1 ━━")
@@ -286,19 +289,25 @@ export function formatToolSummary(tools: ToolRecord[]): string {
   const parts: string[] = [];
   for (const [toolName, count] of grouped) {
     if (toolName === "_unknown") {
-      parts.push(`执行 ${count} 个操作`);
+      parts.push(`${count} 个操作`);
     } else {
       const { verb, noun } = TOOL_VERB_MAP[toolName];
-      parts.push(`${verb} ${count} 个${noun}`);
+      parts.push(`${verb} ${count} ${noun}`);
     }
   }
 
-  return `📊 本轮: ${parts.join(" · ")}`;
+  return `📊 本轮 · ${parts.join(" · ")}`;
 }
 
 /** Format a tool execution failure for WeChat display. */
 export function formatToolCallFailure(toolName: string, content: string): string {
-  return `❌ 失败: ${toolName}\n${truncate(content, 300)}`;
+  return `❌ ${toolName} 失败\n─────────────\n${truncate(content, 300)}`;
+}
+
+const CIRCLED_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];
+
+function circledNum(n: number): string {
+  return n < CIRCLED_NUMBERS.length ? CIRCLED_NUMBERS[n]! : `${n + 1}.`;
 }
 
 /** Format an AskUserQuestion tool input for WeChat display with numbered options. */
@@ -313,25 +322,24 @@ export function formatAskUserQuestion(input: Record<string, unknown>): string {
     parts.push("");
 
     const options = Array.isArray(q.options) ? q.options as Array<Record<string, string>> : [];
-    let num = 1;
-    for (const opt of options) {
+    for (let i = 0; i < options.length; i++) {
+      const opt = options[i]!;
       const label = String(opt.label ?? "");
       const desc = String(opt.description ?? "");
       if (desc) {
-        parts.push(`${num}. ${label}`);
+        parts.push(`${circledNum(i)} ${label}`);
         parts.push(`   ${desc}`);
       } else {
-        parts.push(`${num}. ${label}`);
+        parts.push(`${circledNum(i)} ${label}`);
       }
-      num++;
     }
     // Add "Other" option for free-text answers
-    parts.push(`${num}. 其他`);
+    parts.push(`${circledNum(options.length)} 其他`);
     parts.push("   输入自定义回答");
   }
 
   parts.push("");
-  parts.push("回复序号选择 (如: 1)");
+  parts.push("💬 回复序号选择 (如: 1)");
   return parts.join("\n");
 }
 
@@ -342,9 +350,9 @@ export function formatSystemEvent(event: { subtype: string; [key: string]: unkno
       const label = String(event.summary ?? event.task_id ?? "unknown");
       const status = event.status as string | undefined;
       if (status === "failed") {
-        return `❌ 后台任务失败: ${truncate(label, TOOL_DISPLAY_LIMIT)}`;
+        return `❌ 后台任务失败 · ${truncate(label, TOOL_DISPLAY_LIMIT)}`;
       }
-      return `🔔 后台任务完成: ${truncate(label, TOOL_DISPLAY_LIMIT)}`;
+      return `🔔 后台任务完成 · ${truncate(label, TOOL_DISPLAY_LIMIT)}`;
     }
     case "files_persisted": {
       const rawFiles = event.files as Array<{ filename: string; file_id: string }> | undefined;
@@ -353,21 +361,21 @@ export function formatSystemEvent(event: { subtype: string; [key: string]: unkno
         const fileList = filenames.length <= 5
           ? filenames.map((f) => truncate(f, 80)).join(", ")
           : `${filenames.slice(0, 4).map((f) => truncate(f, 80)).join(", ")} 等${filenames.length}个文件`;
-        return `💾 文件已保存: ${fileList}`;
+        return `💾 文件已保存 · ${fileList}`;
       }
       return "💾 文件已保存";
     }
     case "hook_started": {
       const hookName = String(event.hook_name ?? "unknown");
-      return `🪝 Hook 开始: ${truncate(hookName, TOOL_DISPLAY_LIMIT)}`;
+      return `🪝 Hook 开始 · ${truncate(hookName, TOOL_DISPLAY_LIMIT)}`;
     }
     case "hook_response": {
       const hookName = String(event.hook_name ?? "unknown");
       const exitCode = event.exit_code as number | undefined;
       if (exitCode === 0 || exitCode === undefined) {
-        return `🪝 Hook 完成: ${truncate(hookName, TOOL_DISPLAY_LIMIT)}`;
+        return `🪝 Hook 完成 · ${truncate(hookName, TOOL_DISPLAY_LIMIT)}`;
       }
-      return `🪝 Hook 失败: ${truncate(hookName, TOOL_DISPLAY_LIMIT)} (exit: ${exitCode})`;
+      return `🪝 Hook 失败 · ${truncate(hookName, TOOL_DISPLAY_LIMIT)} (exit: ${exitCode})`;
     }
     // Suppress noisy/uninteresting subtypes
     case "hook_progress":
@@ -390,7 +398,7 @@ export function formatStatusChange(status: string): string {
 export function formatAuthStatus(message: Record<string, unknown>): string {
   const error = message.error as string | undefined;
   if (!error) return "";
-  return `🔐 认证错误: ${truncate(error, 300)}`;
+  return `🔐 认证错误 · ${truncate(error, 300)}`;
 }
 
 /** Format tool progress for WeChat display. Returns empty string if too short. */
@@ -405,7 +413,7 @@ export function formatToolProgress(
   const mins = Math.floor(elapsedSeconds / 60);
   const secs = Math.round(elapsedSeconds % 60);
   const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
-  return `⏳ ${label} 已运行 ${timeStr}`;
+  return `⏳ ${label} 进行中 · 已用时 ${timeStr}`;
 }
 
 /** Format an AI auto-resolved permission for WeChat display. */
@@ -418,7 +426,7 @@ export function formatPermissionAutoResolved(
   const label = behavior === "allow" ? "批准" : "拒绝";
   const formatted = formatToolCall(toolName, input);
   const toolDisplay = formatted || toolName;
-  return `🤖 AI自动${label}: ${toolDisplay}\n原因: ${truncate(reason, 150)}`;
+  return `🤖 AI 自动${label} · ${toolDisplay}\n原因 · ${truncate(reason, 150)}`;
 }
 
 /** Format a session phase change for WeChat display. Returns empty string for uninteresting transitions. */
@@ -447,7 +455,7 @@ export function formatRateLimitEvent(message: Record<string, unknown>): string {
   const retryAfter = message.retry_after_ms as number | undefined;
   if (!error) return "";
   const retryHint = retryAfter ? ` (等待 ${Math.round(retryAfter / 1000)}s 后重试)` : "";
-  return `⏱️ 速率限制: ${truncate(error, 200)}${retryHint}`;
+  return `⏱️ 速率限制 · ${truncate(error, 200)}${retryHint}`;
 }
 
 /** Format a tool result preview for WeChat display. Shows a brief summary of non-error tool results. */
@@ -455,15 +463,15 @@ export function formatToolResultPreview(toolName: string, content: string): stri
   if (!content.trim()) return "";
   const preview = truncate(content.trim(), 150);
   const verb = TOOL_VERB_MAP[toolName]?.verb ?? "结果";
-  return `📄 ${verb}: ${preview}`;
+  return `📄 ${verb} · ${preview}`;
 }
 
 /** Format prompt suggestions for WeChat display. */
 export function formatPromptSuggestions(suggestions: string[]): string {
   if (suggestions.length === 0) return "";
-  const lines: string[] = ["💡 你可以问:"];
+  const lines: string[] = ["💡 你可以问"];
   suggestions.slice(0, 3).forEach((s, i) => {
-    lines.push(`${i + 1}. ${truncate(s, 80)}`);
+    lines.push(`${circledNum(i)} ${truncate(s, 80)}`);
   });
   return lines.join("\n");
 }
