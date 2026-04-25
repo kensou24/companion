@@ -664,10 +664,10 @@ describe("formatSingleQuestion", () => {
   it("formats first question of multi-question set with progress indicator", () => {
     const result = formatSingleQuestion(questions, 0);
     expect(result).toContain("❓ [1/2] Which approach?");
-    expect(result).toContain("1. A");
+    expect(result).toContain("① A");
     expect(result).toContain("   Fast");
-    expect(result).toContain("2. B");
-    expect(result).toContain("3. 其他");
+    expect(result).toContain("② B");
+    expect(result).toContain("③ 其他");
     expect(result).toContain("回复序号选择");
     expect(result).toContain("/pick");
   });
@@ -675,8 +675,8 @@ describe("formatSingleQuestion", () => {
   it("formats second question with progress indicator", () => {
     const result = formatSingleQuestion(questions, 1);
     expect(result).toContain("❓ [2/2] Confirm?");
-    expect(result).toContain("1. Yes");
-    expect(result).toContain("2. No");
+    expect(result).toContain("① Yes");
+    expect(result).toContain("② No");
   });
 
   it("formats single question without progress indicator", () => {
@@ -1465,7 +1465,7 @@ describe("WeChat relay — git branch change", () => {
 describe("WeChat relay — idle kill notification", () => {
   it("formats idle kill message with session ID prefix", () => {
     const sessionId = "abcd1234efgh5678";
-    const msg = `⏰ 会话 ${sessionId.slice(0, 8)}... 因长时间无活动已自动关闭。\n发送 /new 创建新会话。`;
+    const msg = `⏰ 会话 ${sessionId.slice(0, 8)}... 因长时间无活动已自动关闭\n发送 /new 创建新会话`;
     expect(msg).toContain("⏰ 会话 abcd1234...");
     expect(msg).toContain("长时间无活动");
     expect(msg).toContain("/new");
@@ -1550,8 +1550,8 @@ describe("WeChat relay — subagent progress", () => {
     if (toolName === "Agent" && elapsed >= 15) {
       const agentLabel = parentToolUseId ? "[子任务] " : "";
       const elapsedStr = formatElapsed(elapsed);
-      const msg = `${agentLabel}🤖 子任务执行中... 已运行 ${elapsedStr}`;
-      expect(msg).toBe("[子任务] 🤖 子任务执行中... 已运行 20秒");
+      const msg = `${agentLabel}🤖 子任务执行中 · 已运行 ${elapsedStr}`;
+      expect(msg).toBe("[子任务] 🤖 子任务执行中 · 已运行 20秒");
     }
   });
 
@@ -1563,8 +1563,8 @@ describe("WeChat relay — subagent progress", () => {
     if (toolName === "Agent" && elapsed >= 15) {
       const agentLabel = parentToolUseId ? "[子任务] " : "";
       const elapsedStr = formatElapsed(elapsed);
-      const msg = `${agentLabel}🤖 子任务执行中... 已运行 ${elapsedStr}`;
-      expect(msg).toBe("🤖 子任务执行中... 已运行 30秒");
+      const msg = `${agentLabel}🤖 子任务执行中 · 已运行 ${elapsedStr}`;
+      expect(msg).toBe("🤖 子任务执行中 · 已运行 30秒");
     }
   });
 
@@ -1826,8 +1826,8 @@ describe("WeChat relay — progress heartbeat", () => {
     const secs = elapsed % 60;
     const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
     const toolName = "Bash";
-    const msg = `⏳ 仍在处理中 (${toolName})... 已用时 ${timeStr}`;
-    expect(msg).toBe("⏳ 仍在处理中 (Bash)... 已用时 45秒");
+    const msg = `⏳ 处理中 (${toolName}) · 已用时 ${timeStr}`;
+    expect(msg).toBe("⏳ 处理中 (Bash) · 已用时 45秒");
   });
 
   it("formats heartbeat message with elapsed time in minutes", () => {
@@ -1835,8 +1835,8 @@ describe("WeChat relay — progress heartbeat", () => {
     const mins = Math.floor(elapsed / 60);
     const secs = elapsed % 60;
     const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
-    const msg = `⏳ 仍在处理中... 已用时 ${timeStr}`;
-    expect(msg).toBe("⏳ 仍在处理中... 已用时 2分5秒");
+    const msg = `⏳ 处理中 · 已用时 ${timeStr}`;
+    expect(msg).toBe("⏳ 处理中 · 已用时 2分5秒");
   });
 
   it("formats heartbeat without tool name when unknown", () => {
@@ -1846,8 +1846,8 @@ describe("WeChat relay — progress heartbeat", () => {
     const timeStr = mins > 0 ? `${mins}分${secs}秒` : `${secs}秒`;
     const lastActiveToolName = "";
     const toolHint = lastActiveToolName ? ` (${lastActiveToolName})` : "";
-    const msg = `⏳ 仍在处理中${toolHint}... 已用时 ${timeStr}`;
-    expect(msg).toBe("⏳ 仍在处理中... 已用时 1分0秒");
+    const msg = `⏳ 处理中${toolHint} · 已用时 ${timeStr}`;
+    expect(msg).toBe("⏳ 处理中 · 已用时 1分0秒");
   });
 
   it("heartbeat is suppressed when recent message was sent", () => {

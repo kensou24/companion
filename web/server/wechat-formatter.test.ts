@@ -8,47 +8,47 @@ import { formatToolCall, formatPermissionRequest, formatMarkdown, splitForWeChat
 describe("formatToolCall", () => {
   it("formats Bash tool — extracts command", () => {
     const result = formatToolCall("Bash", { command: "npm test" });
-    expect(result).toBe("🔧 执行: npm test");
+    expect(result).toBe("🔧 执行 · npm test");
   });
 
   it("formats Read tool — extracts file_path", () => {
     const result = formatToolCall("Read", { file_path: "src/index.ts" });
-    expect(result).toBe("📖 读取: src/index.ts");
+    expect(result).toBe("📖 读取 · src/index.ts");
   });
 
   it("formats Write tool — extracts file_path", () => {
     const result = formatToolCall("Write", { file_path: "src/app.ts" });
-    expect(result).toBe("✏️ 写入: src/app.ts");
+    expect(result).toBe("✏️ 写入 · src/app.ts");
   });
 
   it("formats Edit tool — extracts file_path", () => {
     const result = formatToolCall("Edit", { file_path: "package.json" });
-    expect(result).toBe("📝 编辑: package.json");
+    expect(result).toBe("📝 编辑 · package.json");
   });
 
   it("formats Glob tool — extracts pattern", () => {
     const result = formatToolCall("Glob", { pattern: "**/*.test.ts" });
-    expect(result).toBe("🔍 搜索文件: **/*.test.ts");
+    expect(result).toBe("🔍 搜索文件 · **/*.test.ts");
   });
 
   it("formats Grep tool — extracts pattern from input", () => {
     const result = formatToolCall("Grep", { pattern: "parseCommand" });
-    expect(result).toBe("🔍 搜索内容: parseCommand");
+    expect(result).toBe("🔍 搜索内容 · parseCommand");
   });
 
   it("formats WebSearch tool — extracts query", () => {
     const result = formatToolCall("WebSearch", { query: "bun install guide" });
-    expect(result).toBe("🌐 搜索: bun install guide");
+    expect(result).toBe("🌐 搜索 · bun install guide");
   });
 
   it("formats Agent tool — extracts description or prompt", () => {
     const result = formatToolCall("Agent", { description: "探索代码库" });
-    expect(result).toBe("🤖 子任务: 探索代码库");
+    expect(result).toBe("🤖 子任务 · 探索代码库");
   });
 
   it("formats Agent tool — falls back to prompt when no description", () => {
     const result = formatToolCall("Agent", { prompt: "Find all TODOs" });
-    expect(result).toBe("🤖 子任务: Find all TODOs");
+    expect(result).toBe("🤖 子任务 · Find all TODOs");
   });
 
   // TodoWrite, TaskList, etc. are suppressed because they are internal bookkeeping
@@ -60,27 +60,27 @@ describe("formatToolCall", () => {
 
   it("formats unknown tools generically", () => {
     const result = formatToolCall("MyCustomTool", { action: "do something" });
-    expect(result).toBe('🔧 MyCustomTool: {"action":"do something"}');
+    expect(result).toBe('🔧 MyCustomTool · {"action":"do something"}');
   });
 
   it("truncates long input to 200 chars", () => {
     const longCommand = "x".repeat(300);
     const result = formatToolCall("Bash", { command: longCommand });
-    // "🔧 执行: " prefix + truncated content + "..."
+    // "🔧 执行 · " prefix + truncated content + "..."
     expect(result.length).toBeLessThan(220);
     expect(result).toContain("...");
   });
 
   it("handles empty input", () => {
     const result = formatToolCall("Bash", {});
-    expect(result).toBe("🔧 执行: ");
+    expect(result).toBe("🔧 执行 · ");
   });
 
   // MCP tools (e.g. mcp__context7__resolve-library-id) now have dedicated formatting
   // instead of falling through to the generic JSON.stringify formatter.
   it("handles MCP context7 resolve with dedicated format", () => {
     const result = formatToolCall("mcp__context7__resolve-library-id", { query: "react" });
-    expect(result).toContain("📚 查找库: react");
+    expect(result).toContain("📚 查找库 · react");
   });
 
   // Regression: extractToolUses used to truncate JSON.stringify(input) to 200 chars,
@@ -90,7 +90,7 @@ describe("formatToolCall", () => {
       file_path: "src/components/VeryLongComponentName.tsx",
       content: "x".repeat(5000),
     });
-    expect(result).toBe("✏️ 写入: src/components/VeryLongComponentName.tsx");
+    expect(result).toBe("✏️ 写入 · src/components/VeryLongComponentName.tsx");
   });
 
   it("formats Edit tool with large old_string — file_path still visible", () => {
@@ -99,7 +99,7 @@ describe("formatToolCall", () => {
       old_string: "x".repeat(5000),
       new_string: "y".repeat(5000),
     });
-    expect(result).toBe("📝 编辑: package.json");
+    expect(result).toBe("📝 编辑 · package.json");
   });
 });
 
@@ -112,6 +112,7 @@ describe("formatPermissionRequest", () => {
     expect(result).toContain("rm -rf /tmp/old_logs");
     expect(result).toContain("/y 批准");
     expect(result).toContain("/n 拒绝");
+    expect(result).toContain("────");
   });
 
   it("formats Write permission — shows file_path and content preview", () => {
@@ -119,7 +120,7 @@ describe("formatPermissionRequest", () => {
       file_path: "src/app.ts",
       content: "export function hello() { return 42; }",
     });
-    expect(result).toContain("写入文件: src/app.ts");
+    expect(result).toContain("写入文件 · src/app.ts");
     expect(result).toContain("内容预览:");
     expect(result).toContain("export function hello()");
   });
@@ -130,7 +131,7 @@ describe("formatPermissionRequest", () => {
       old_string: "version: 1.0.0",
       new_string: "version: 2.0.0",
     });
-    expect(result).toContain("编辑文件: package.json");
+    expect(result).toContain("编辑文件 · package.json");
     expect(result).toContain("替换:");
     expect(result).toContain("version: 1.0.0");
     expect(result).toContain("→");
@@ -141,7 +142,7 @@ describe("formatPermissionRequest", () => {
     const result = formatPermissionRequest("Agent", {
       description: "探索 src 目录下的代码结构",
     });
-    expect(result).toContain("子任务: 探索 src 目录下的代码结构");
+    expect(result).toContain("子任务 · 探索 src 目录下的代码结构");
   });
 
   it("formats unknown tool — shows tool name and description or input", () => {
@@ -257,7 +258,9 @@ describe("formatMarkdown", () => {
   it("converts fenced code blocks to indented blocks", () => {
     const input = "```typescript\nconsole.log('hi');\n```";
     const result = formatMarkdown(input);
-    expect(result).toBe("  │ console.log('hi');");
+    expect(result).toContain("│ console.log('hi');");
+    expect(result).toContain("┌─ typescript ─");
+    expect(result).toContain("└───────────");
   });
 
   it("converts # headings to bracket format", () => {
@@ -310,8 +313,8 @@ describe("formatMarkdown", () => {
   it("handles multiple code blocks", () => {
     const input = "```js\ncode1\n```\n\ntext\n\n```js\ncode2\n```";
     const result = formatMarkdown(input);
-    expect(result).toContain("  │ code1");
-    expect(result).toContain("  │ code2");
+    expect(result).toContain("│ code1");
+    expect(result).toContain("│ code2");
     expect(result).toContain("text");
   });
 
@@ -339,7 +342,7 @@ describe("formatToolSummary", () => {
       { name: "Read", input: { file_path: "c.ts" } },
     ];
     const result = formatToolSummary(tools);
-    expect(result).toBe("📊 本轮: 读取 3 个文件");
+    expect(result).toBe("📊 本轮 · 读取 3 文件");
   });
 
   it("formats multiple tool types with separator", () => {
@@ -351,7 +354,7 @@ describe("formatToolSummary", () => {
       { name: "Bash", input: { command: "npm test" } },
     ];
     const result = formatToolSummary(tools);
-    expect(result).toBe("📊 本轮: 读取 3 个文件 · 编辑 1 个文件 · 运行 1 个命令");
+    expect(result).toBe("📊 本轮 · 读取 3 文件 · 编辑 1 文件 · 运行 1 命令");
   });
 
   it("returns empty string for empty array", () => {
@@ -371,7 +374,7 @@ describe("formatToolSummary", () => {
       { name: "CustomTool2", input: {} },
     ];
     const result = formatToolSummary(tools);
-    expect(result).toContain("执行 2 个操作");
+    expect(result).toContain("2 个操作");
   });
 
   it("filters out suppressed tools from summary", () => {
@@ -382,7 +385,7 @@ describe("formatToolSummary", () => {
       { name: "Read", input: { file_path: "c.ts" } },
     ];
     const result = formatToolSummary(tools);
-    expect(result).toBe("📊 本轮: 读取 3 个文件");
+    expect(result).toBe("📊 本轮 · 读取 3 文件");
   });
 
   it("skips summary for 1-2 safe-only tools (auto-approved, too noisy)", () => {
@@ -405,7 +408,7 @@ describe("formatToolSummary", () => {
       { name: "Read", input: { file_path: "c.ts" } },
     ];
     const result = formatToolSummary(tools);
-    expect(result).toBe("📊 本轮: 读取 3 个文件");
+    expect(result).toBe("📊 本轮 · 读取 3 文件");
   });
 
   it("shows summary for any count of non-safe tools", () => {
@@ -413,7 +416,7 @@ describe("formatToolSummary", () => {
       { name: "Edit", input: { file_path: "a.ts" } },
     ];
     const result = formatToolSummary(tools);
-    expect(result).toBe("📊 本轮: 编辑 1 个文件");
+    expect(result).toBe("📊 本轮 · 编辑 1 文件");
   });
 });
 
@@ -422,20 +425,20 @@ describe("formatToolSummary", () => {
 describe("formatToolCallFailure", () => {
   it("formats a tool failure with truncated content", () => {
     const result = formatToolCallFailure("Bash", "Error: command failed with exit code 1");
-    expect(result).toBe("❌ 失败: Bash\nError: command failed with exit code 1");
+    expect(result).toBe("❌ Bash 失败\n─────────────\nError: command failed with exit code 1");
   });
 
   it("truncates long error content to 300 chars", () => {
     const longError = "x".repeat(500);
     const result = formatToolCallFailure("Bash", longError);
-    expect(result.length).toBeLessThan(350);
-    expect(result).toContain("❌ 失败: Bash\n");
+    expect(result.length).toBeLessThan(370);
+    expect(result).toContain("❌ Bash 失败\n");
     expect(result.endsWith("...")).toBe(true);
   });
 
   it("handles empty content", () => {
     const result = formatToolCallFailure("Bash", "");
-    expect(result).toBe("❌ 失败: Bash\n");
+    expect(result).toBe("❌ Bash 失败\n─────────────\n");
   });
 });
 
@@ -458,9 +461,9 @@ describe("formatAskUserQuestion", () => {
     };
     const result = formatAskUserQuestion(input);
     expect(result).toContain("❓ Which approach?");
-    expect(result).toContain("1. Option A");
+    expect(result).toContain("① Option A");
     expect(result).toContain("   Faster");
-    expect(result).toContain("2. Option B");
+    expect(result).toContain("② Option B");
     expect(result).toContain("   Safer");
     expect(result).toContain("回复序号选择");
   });
@@ -480,8 +483,8 @@ describe("formatAskUserQuestion", () => {
       ],
     };
     const result = formatAskUserQuestion(input);
-    expect(result).toContain("1. Yes");
-    expect(result).toContain("2. No");
+    expect(result).toContain("① Yes");
+    expect(result).toContain("② No");
   });
 
   it("handles empty questions gracefully", () => {
@@ -506,7 +509,7 @@ describe("formatAskUserQuestion", () => {
       ],
     };
     const result = formatAskUserQuestion(input);
-    expect(result).toMatch(/\d+\.\s+其他/);
+    expect(result).toMatch(/[①②③④⑤⑥⑦⑧⑨⑩]\s+其他/);
   });
 });
 
@@ -520,27 +523,27 @@ describe("formatSystemEvent", () => {
   // (completed/failed/stopped) — not processName/command/exitCode which don't exist
   it("formats task_notification with completed status", () => {
     const result = formatSystemEvent({ subtype: "task_notification", summary: "npm test", status: "completed" });
-    expect(result).toBe("🔔 后台任务完成: npm test");
+    expect(result).toBe("🔔 后台任务完成 · npm test");
   });
 
   it("formats task_notification with no status (defaults to success)", () => {
     const result = formatSystemEvent({ subtype: "task_notification", summary: "npm test" });
-    expect(result).toBe("🔔 后台任务完成: npm test");
+    expect(result).toBe("🔔 后台任务完成 · npm test");
   });
 
   it("formats task_notification with failed status", () => {
     const result = formatSystemEvent({ subtype: "task_notification", summary: "npm test", status: "failed" });
-    expect(result).toBe("❌ 后台任务失败: npm test");
+    expect(result).toBe("❌ 后台任务失败 · npm test");
   });
 
   it("formats task_notification with task_id fallback when no summary", () => {
     const result = formatSystemEvent({ subtype: "task_notification", task_id: "task-123", status: "completed" });
-    expect(result).toBe("🔔 后台任务完成: task-123");
+    expect(result).toBe("🔔 后台任务完成 · task-123");
   });
 
   it("formats task_notification with stopped status (treated as success)", () => {
     const result = formatSystemEvent({ subtype: "task_notification", summary: "build.sh", status: "stopped" });
-    expect(result).toBe("🔔 后台任务完成: build.sh");
+    expect(result).toBe("🔔 后台任务完成 · build.sh");
   });
 
   // files_persisted uses `{ filename, file_id }[]` objects, not string[]
@@ -549,7 +552,7 @@ describe("formatSystemEvent", () => {
       subtype: "files_persisted",
       files: [{ filename: "src/app.ts", file_id: "abc" }, { filename: "src/index.ts", file_id: "def" }],
     });
-    expect(result).toBe("💾 文件已保存: src/app.ts, src/index.ts");
+    expect(result).toBe("💾 文件已保存 · src/app.ts, src/index.ts");
   });
 
   it("formats files_persisted with many files (truncated)", () => {
@@ -566,17 +569,17 @@ describe("formatSystemEvent", () => {
   // hook events use snake_case fields (hook_name, exit_code) matching CLIHookStartedMessage
   it("formats hook_started", () => {
     const result = formatSystemEvent({ subtype: "hook_started", hook_name: "pre-commit" });
-    expect(result).toBe("🪝 Hook 开始: pre-commit");
+    expect(result).toBe("🪝 Hook 开始 · pre-commit");
   });
 
   it("formats hook_response with success", () => {
     const result = formatSystemEvent({ subtype: "hook_response", hook_name: "pre-commit", exit_code: 0 });
-    expect(result).toBe("🪝 Hook 完成: pre-commit");
+    expect(result).toBe("🪝 Hook 完成 · pre-commit");
   });
 
   it("formats hook_response with failure", () => {
     const result = formatSystemEvent({ subtype: "hook_response", hook_name: "pre-commit", exit_code: 1 });
-    expect(result).toBe("🪝 Hook 失败: pre-commit (exit: 1)");
+    expect(result).toBe("🪝 Hook 失败 · pre-commit (exit: 1)");
   });
 
   it("returns empty for suppressed hook_progress", () => {
@@ -625,7 +628,7 @@ describe("formatStatusChange", () => {
 describe("formatAuthStatus", () => {
   it("formats auth error", () => {
     const result = formatAuthStatus({ error: "Token expired" });
-    expect(result).toBe("🔐 认证错误: Token expired");
+    expect(result).toBe("🔐 认证错误 · Token expired");
   });
 
   it("returns empty when no error", () => {
@@ -649,7 +652,7 @@ describe("formatAuthStatus", () => {
 describe("formatToolProgress", () => {
   it("formats progress for tool running > 30s", () => {
     const result = formatToolProgress("Bash", "tool-123", 45);
-    expect(result).toBe("⏳ 运行 已运行 45秒");
+    expect(result).toBe("⏳ 运行 进行中 · 已用时 45秒");
   });
 
   it("returns empty for tool running < 30s", () => {
@@ -659,7 +662,7 @@ describe("formatToolProgress", () => {
 
   it("returns empty for tool running exactly 30s (boundary)", () => {
     const result = formatToolProgress("Bash", "tool-123", 30);
-    expect(result).toBe("⏳ 运行 已运行 30秒");
+    expect(result).toBe("⏳ 运行 进行中 · 已用时 30秒");
   });
 
   it("uses custom minSeconds threshold", () => {
@@ -669,22 +672,22 @@ describe("formatToolProgress", () => {
 
   it("uses known tool verb for display", () => {
     const result = formatToolProgress("Read", "tool-456", 35);
-    expect(result).toBe("⏳ 读取 已运行 35秒");
+    expect(result).toBe("⏳ 读取 进行中 · 已用时 35秒");
   });
 
   it("falls back to tool name for unknown tools", () => {
     const result = formatToolProgress("CustomTool", "tool-789", 40);
-    expect(result).toBe("⏳ CustomTool 已运行 40秒");
+    expect(result).toBe("⏳ CustomTool 进行中 · 已用时 40秒");
   });
 
   it("formats elapsed time in minutes and seconds for > 60s", () => {
     const result = formatToolProgress("Bash", "tool-123", 125);
-    expect(result).toBe("⏳ 运行 已运行 2分5秒");
+    expect(result).toBe("⏳ 运行 进行中 · 已用时 2分5秒");
   });
 
   it("formats exactly 60 seconds as 1分0秒", () => {
     const result = formatToolProgress("Bash", "tool-123", 60);
-    expect(result).toBe("⏳ 运行 已运行 1分0秒");
+    expect(result).toBe("⏳ 运行 进行中 · 已用时 1分0秒");
   });
 });
 
@@ -695,21 +698,21 @@ describe("formatToolProgress", () => {
 describe("formatPermissionAutoResolved", () => {
   it("formats auto-approve for Bash", () => {
     const result = formatPermissionAutoResolved("Bash", { command: "ls" }, "allow", "Read-only listing command");
-    expect(result).toContain("🤖 AI自动批准");
-    expect(result).toContain("执行: ls");
+    expect(result).toContain("🤖 AI 自动批准");
+    expect(result).toContain("执行 · ls");
     expect(result).toContain("Read-only listing command");
   });
 
   it("formats auto-deny for Write", () => {
     const result = formatPermissionAutoResolved("Write", { file_path: "/etc/passwd" }, "deny", "Writing to system file");
-    expect(result).toContain("🤖 AI自动拒绝");
-    expect(result).toContain("写入: /etc/passwd");
+    expect(result).toContain("🤖 AI 自动拒绝");
+    expect(result).toContain("写入 · /etc/passwd");
     expect(result).toContain("Writing to system file");
   });
 
   it("uses tool name when formatToolCall returns empty (suppressed tool)", () => {
     const result = formatPermissionAutoResolved("TodoWrite", {}, "allow", "Internal tool");
-    expect(result).toContain("🤖 AI自动批准");
+    expect(result).toContain("🤖 AI 自动批准");
     expect(result).toContain("TodoWrite");
   });
 
@@ -758,18 +761,18 @@ describe("formatSessionPhase", () => {
 describe("formatPromptSuggestions", () => {
   it("formats up to 3 suggestions", () => {
     const result = formatPromptSuggestions(["Run tests", "Check coverage", "Deploy"]);
-    expect(result).toContain("💡 你可以问:");
-    expect(result).toContain("1. Run tests");
-    expect(result).toContain("2. Check coverage");
-    expect(result).toContain("3. Deploy");
+    expect(result).toContain("💡 你可以问");
+    expect(result).toContain("① Run tests");
+    expect(result).toContain("② Check coverage");
+    expect(result).toContain("③ Deploy");
   });
 
   it("truncates to 3 suggestions even if more provided", () => {
     const result = formatPromptSuggestions(["A", "B", "C", "D", "E"]);
-    expect(result).toContain("1. A");
-    expect(result).toContain("2. B");
-    expect(result).toContain("3. C");
-    expect(result).not.toContain("4. D");
+    expect(result).toContain("① A");
+    expect(result).toContain("② B");
+    expect(result).toContain("③ C");
+    expect(result).not.toContain("④ D");
   });
 
   it("returns empty for empty array", () => {
@@ -790,42 +793,42 @@ describe("formatPromptSuggestions", () => {
 describe("formatToolCall — MCP tools", () => {
   it("formats context7 resolve-library-id", () => {
     const result = formatToolCall("mcp__context7__resolve-library-id", { libraryName: "react", query: "react" });
-    expect(result).toBe("📚 查找库: react");
+    expect(result).toBe("📚 查找库 · react");
   });
 
   it("formats context7 query-docs", () => {
     const result = formatToolCall("mcp__context7__query-docs", { query: "how to use hooks" });
-    expect(result).toBe("📚 查询文档: how to use hooks");
+    expect(result).toBe("📚 查询文档 · how to use hooks");
   });
 
   it("formats puppeteer navigate", () => {
     const result = formatToolCall("mcp__puppeteer__puppeteer_navigate", { url: "https://example.com" });
-    expect(result).toBe("🌐 打开页面: https://example.com");
+    expect(result).toBe("🌐 打开页面 · https://example.com");
   });
 
   it("formats puppeteer screenshot", () => {
     const result = formatToolCall("mcp__puppeteer__puppeteer_screenshot", { name: "homepage" });
-    expect(result).toBe("📸 截图: homepage");
+    expect(result).toBe("📸 截图 · homepage");
   });
 
   it("formats puppeteer click", () => {
     const result = formatToolCall("mcp__puppeteer__puppeteer_click", { selector: "#btn" });
-    expect(result).toBe("👆 点击: #btn");
+    expect(result).toBe("👆 点击 · #btn");
   });
 
   it("formats puppeteer fill", () => {
     const result = formatToolCall("mcp__puppeteer__puppeteer_fill", { selector: "input[name=q]", value: "test" });
-    expect(result).toBe("⌨️ 填写: input[name=q]");
+    expect(result).toBe("⌨️ 填写 · input[name=q]");
   });
 
   it("formats puppeteer evaluate generically", () => {
     const result = formatToolCall("mcp__puppeteer__puppeteer_evaluate", { script: "1+1" });
-    expect(result).toBe("🌐 浏览器: evaluate");
+    expect(result).toBe("🌐 浏览器 · evaluate");
   });
 
   it("formats sentry issue lookup", () => {
     const result = formatToolCall("mcp__sentry__get_sentry_issue", { issue_id_or_url: "PROJ-123" });
-    expect(result).toBe("🐛 Sentry: PROJ-123");
+    expect(result).toBe("🐛 Sentry · PROJ-123");
   });
 
   it("suppresses sequential thinking (internal)", () => {
@@ -835,7 +838,7 @@ describe("formatToolCall — MCP tools", () => {
 
   it("formats web reader", () => {
     const result = formatToolCall("mcp__web_reader__webReader", { url: "https://example.com" });
-    expect(result).toBe("🌐 读取网页: https://example.com");
+    expect(result).toBe("🌐 读取网页 · https://example.com");
   });
 
   it("falls back to generic for unknown MCP tools", () => {
@@ -851,12 +854,12 @@ describe("formatToolCall — MCP tools", () => {
 describe("formatRateLimitEvent", () => {
   it("formats rate limit error", () => {
     const result = formatRateLimitEvent({ error: "Too many requests" });
-    expect(result).toBe("⏱️ 速率限制: Too many requests");
+    expect(result).toBe("⏱️ 速率限制 · Too many requests");
   });
 
   it("includes retry hint when retry_after_ms is present", () => {
     const result = formatRateLimitEvent({ error: "Rate limited", retry_after_ms: 30000 });
-    expect(result).toContain("速率限制: Rate limited");
+    expect(result).toContain("速率限制 · Rate limited");
     expect(result).toContain("等待 30s 后重试");
   });
 
@@ -874,7 +877,7 @@ describe("formatRateLimitEvent", () => {
   it("handles zero retry_after_ms", () => {
     const result = formatRateLimitEvent({ error: "Limited", retry_after_ms: 0 });
     // retry_after_ms is 0 which is falsy — no retry hint
-    expect(result).toBe("⏱️ 速率限制: Limited");
+    expect(result).toBe("⏱️ 速率限制 · Limited");
   });
 });
 
@@ -884,13 +887,13 @@ describe("formatRateLimitEvent", () => {
 describe("formatToolResultPreview", () => {
   it("formats tool result with known tool verb", () => {
     const result = formatToolResultPreview("Bash", "command output here");
-    expect(result).toContain("📄 运行:");
+    expect(result).toContain("📄 运行 ·");
     expect(result).toContain("command output here");
   });
 
   it("formats with generic verb for unknown tool", () => {
     const result = formatToolResultPreview("CustomTool", "some result");
-    expect(result).toContain("📄 结果:");
+    expect(result).toContain("📄 结果 ·");
     expect(result).toContain("some result");
   });
 
