@@ -181,6 +181,17 @@ export class SendQueue {
           this.rateLimitCoolDownUntil = 0;
         }
 
+        this.appendRecord({
+          id: `sq-${this.recordIdCounter}`,
+          wxid: item.userId,
+          text: item.text,
+          priority: item.priority ? "critical" : "normal",
+          createdAt: Date.now(),
+          status: sent ? "acked" : "failed",
+          attempts: 1,
+          maxAttempts: 1,
+        });
+
         item._resolve?.(sent ? "ok" : "failed");
       }
     } finally {

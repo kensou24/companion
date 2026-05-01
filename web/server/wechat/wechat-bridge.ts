@@ -10,13 +10,10 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { COMPANION_HOME } from "../paths.js";
 import QRCode from "qrcode";
 import { getSettings } from "../settings-manager.js";
-import { splitForWeChat, formatToolCall, formatPermissionRequest, formatMarkdown, formatToolSummary, formatToolCallFailure, formatAskUserQuestion, formatSystemEvent, formatStatusChange, formatAuthStatus, formatToolProgress, formatPermissionAutoResolved, formatSessionPhase, formatPromptSuggestions, formatRateLimitEvent, formatToolResultPreview } from "../wechat-formatter.js";
 import { SessionManager } from "./wechat-session-manager.js";
 import { SendQueue } from "./wechat-send-queue.js";
 import { Relay } from "./wechat-relay.js";
 import { parseCommand, formatSessionName, formatSingleQuestion, HELP_TEXT } from "./wechat-command-handler.js";
-import type { WeChatUserSession, PendingPermission, PendingAskQuestion } from "./types.js";
-
 // Re-export types and helpers for backward compatibility
 export { parseCommand, formatSessionName, formatSingleQuestion } from "./wechat-command-handler.js";
 export { isRateLimitError } from "./wechat-send-queue.js";
