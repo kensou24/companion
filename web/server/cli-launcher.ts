@@ -13,6 +13,7 @@ import type { SessionStore } from "./session-store.js";
 import type { BackendType } from "./session-types.js";
 import type { RecorderManager } from "./recorder.js";
 import { CodexAdapter } from "./codex-adapter.js";
+import { ClaudeAdapter } from "./claude-adapter.js";
 import { resolveBinary, getEnrichedPath } from "./path-resolver.js";
 import { containerManager } from "./container-manager.js";
 import { companionBus } from "./event-bus.js";
@@ -481,17 +482,6 @@ export class CliLauncher {
       }
     }
 
-    // Allow overriding the host alias used by containerized Claude sessions.
-    // Useful when host.docker.internal is unavailable in a given Docker setup.
-    const containerSdkHost = (process.env.COMPANION_CONTAINER_SDK_HOST || "host.docker.internal").trim()
-      || "host.docker.internal";
-
-    // When running inside a container, the SDK URL should target the host alias
-    // so the CLI can connect back to the Hono server running on the host.
-    const sdkUrl = isContainerized
-      ? `ws://${containerSdkHost}:${this.port}/ws/cli/${sessionId}`
-      : `ws://localhost:${this.port}/ws/cli/${sessionId}`;
-
     // Claude Code rejects bypassPermissions when running with root/sudo.
     // Container sessions are downgraded by default; host sessions are only
     // downgraded when this server itself runs as root.
@@ -518,7 +508,6 @@ export class CliLauncher {
     }
 
     const args: string[] = [
-      "--sdk-url", sdkUrl,
       "--print",
       "--output-format", "stream-json",
       "--input-format", "stream-json",
@@ -604,6 +593,7 @@ export class CliLauncher {
     const proc = Bun.spawn(spawnCmd, {
       cwd: spawnCwd,
       env: spawnEnv,
+      stdin: "pipe",
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -611,8 +601,37 @@ export class CliLauncher {
     info.pid = proc.pid;
     this.processes.set(sessionId, proc);
 
-    // Stream stdout/stderr for debugging
-    this.pipeOutput(sessionId, proc);
+    // Create ClaudeAdapter with stdio transport
+    const adapter = new ClaudeAdapter(sessionId, {
+      recorder: this.recorder,
+      onActivityUpdate: () => {
+        // Activity tracking is handled by the bridge via onSessionMeta
+      },
+    });
+
+    // Attach stdio transport (stdin for writing, stdout for reading NDJSON)
+    const stdin = proc.stdin;
+    const stdout = proc.stdout;
+    if (stdin && stdout && typeof stdin !== "number" && typeof stdout !== "number") {
+      adapter.attachStdio(stdin, stdout);
+    } else {
+      console.error(`[cli-launcher] Failed to get stdin/stdout pipes for session ${sessionId}`);
+      info.state = "exited";
+      info.exitCode = 1;
+      this.persistState();
+      return;
+    }
+
+    // Only pipe stderr for debugging (stdout is NDJSON protocol now)
+    const stderr = proc.stderr;
+    if (stderr && typeof stderr !== "number") {
+      this.pipeStream(sessionId, stderr, "stderr");
+    }
+
+    // Notify the WsBridge to attach this adapter
+    companionBus.emit("backend:claude-adapter-created", { sessionId, adapter });
+
+    info.state = "connected";
 
     // Monitor process exit
     const spawnedAt = Date.now();

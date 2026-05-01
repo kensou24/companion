@@ -3,6 +3,7 @@
 
 import type { BrowserIncomingMessage, PermissionRequest } from "./session-types.js";
 import type { CodexAdapter } from "./codex-adapter.js";
+import type { ClaudeAdapter } from "./claude-adapter.js";
 import type { SessionPhase } from "./session-state-machine.js";
 
 export interface CompanionEventMap {
@@ -55,6 +56,12 @@ export interface CompanionEventMap {
   "backend:codex-adapter-created": {
     sessionId: string;
     adapter: CodexAdapter;
+  };
+
+  /** Claude adapter created and ready to be attached to WsBridge. */
+  "backend:claude-adapter-created": {
+    sessionId: string;
+    adapter: ClaudeAdapter;
   };
 
   // ── Per-session messages (high volume) ─────────────────────────────

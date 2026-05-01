@@ -167,6 +167,11 @@ export class SessionOrchestrator {
       this.wsBridge.attachBackendAdapter(sessionId, adapter, "codex");
     });
 
+    // When a Claude adapter is created, attach it to the WsBridge
+    companionBus.on("backend:claude-adapter-created", ({ sessionId, adapter }) => {
+      this.wsBridge.attachBackendAdapter(sessionId, adapter, "claude");
+    });
+
     // When a CLI/Codex process exits, notify agent executor and external listeners
     // separately so a throw in one doesn't skip the other (bus isolates each handler).
     companionBus.on("session:exited", ({ sessionId, exitCode }) => {
