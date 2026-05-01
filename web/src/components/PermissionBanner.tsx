@@ -56,7 +56,7 @@ export function PermissionBanner({
     removePermission(sessionId, permission.request_id);
   }
 
-  const isAskUser = permission.tool_name === "AskUserQuestion";
+  const isAskUser = permission.tool_name === "AskUserQuestion" || permission.tool_name.endsWith("__AskUserQuestion");
   const suggestions = permission.permission_suggestions;
 
   return (
@@ -224,7 +224,7 @@ function ToolInputDisplay({
   if (toolName === "Grep") {
     return <GrepDisplay input={input} />;
   }
-  if (toolName === "ExitPlanMode") {
+  if (toolName === "ExitPlanMode" || toolName.endsWith("__ExitPlanMode")) {
     return <ExitPlanModeDisplay input={input} />;
   }
 

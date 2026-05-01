@@ -17,6 +17,11 @@ const SAFE_TOOLS = new Set(["Read", "Glob", "Grep", "Task"]);
 // Tools that should always be shown to the user (interactive)
 const ALWAYS_MANUAL_TOOLS = new Set(["AskUserQuestion", "ExitPlanMode"]);
 
+/** Check if a tool name is an interactive tool (always requires manual review). */
+export function isAlwaysManualTool(toolName: string): boolean {
+  return ALWAYS_MANUAL_TOOLS.has(toolName) || ALWAYS_MANUAL_TOOLS.has(toolName.split("__").pop()!);
+}
+
 // Dangerous patterns for Bash commands
 const DANGEROUS_BASH_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
   { pattern: /\brm\s+(-\w*r\w*\s+(-\w*f\w*\s+)?|(-\w*f\w*\s+)?-\w*r\w*\s+)[/~.]/, reason: "Recursive delete of root, home, or current directory" },
@@ -60,7 +65,7 @@ export function ruleBasedFilter(
   }
 
   // Always-manual interactive tools
-  if (ALWAYS_MANUAL_TOOLS.has(toolName)) {
+  if (isAlwaysManualTool(toolName)) {
     return { verdict: "uncertain", reason: "Interactive tool requires user input", ruleBasedOnly: true };
   }
 

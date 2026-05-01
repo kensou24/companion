@@ -278,7 +278,7 @@ function groupMessages(messages: ChatMessage[]): FeedEntry[] {
 
 // ─── Components ──────────────────────────────────────────────────────────────
 
-function ToolMessageGroup({ group }: { group: ToolMsgGroup }) {
+function ToolMessageGroup({ group, sessionId }: { group: ToolMsgGroup; sessionId?: string }) {
   const [open, setOpen] = useState(false);
   const iconType = getToolIcon(group.toolName);
   const label = getToolLabel(group.toolName);
@@ -374,15 +374,15 @@ function ToolMessageGroup({ group }: { group: ToolMsgGroup }) {
   );
 }
 
-function FeedEntries({ entries, toolActivity }: { entries: FeedEntry[]; toolActivity?: ToolActivityEntry[] }) {
+function FeedEntries({ entries, toolActivity, sessionId }: { entries: FeedEntry[]; toolActivity?: ToolActivityEntry[]; sessionId?: string }) {
   return (
     <>
       {entries.map((entry, i) => {
         if (entry.kind === "tool_msg_group") {
-          return <ToolMessageGroup key={entry.firstId || i} group={entry} />;
+          return <ToolMessageGroup key={entry.firstId || i} group={entry} sessionId={sessionId} />;
         }
         if (entry.kind === "subagent") {
-          return <SubagentContainer key={entry.taskToolUseId} group={entry} />;
+          return <SubagentContainer key={entry.taskToolUseId} group={entry} sessionId={sessionId} />;
         }
         const msg = entry.msg;
         const toolUseIds = getToolUseIdsFromMessage(msg);
@@ -393,7 +393,7 @@ function FeedEntries({ entries, toolActivity }: { entries: FeedEntry[]; toolActi
         const allComplete = matchingActivity.length > 0 && matchingActivity.every((a) => a.completedAt);
         return (
           <div key={msg.id}>
-            <MessageBubble message={msg} />
+            <MessageBubble message={msg} sessionId={sessionId} />
             {allComplete && <ToolTurnSummary entries={matchingActivity} />}
           </div>
         );
@@ -466,7 +466,7 @@ function normalizeSubagentStatus(status?: string): {
   };
 }
 
-function SubagentContainer({ group }: { group: SubagentGroup }) {
+function SubagentContainer({ group, sessionId }: { group: SubagentGroup; sessionId?: string }) {
   const [open, setOpen] = useState(false);
   const label = group.description || "Subagent";
   const agentType = group.agentType;
@@ -558,7 +558,7 @@ function SubagentContainer({ group }: { group: SubagentGroup }) {
                 )}
               </div>
             )}
-            <FeedEntries entries={group.children} />
+            <FeedEntries entries={group.children} sessionId={sessionId} />
           </div>
         )}
       </div>
@@ -989,7 +989,7 @@ export function MessageFeed({ sessionId }: { sessionId: string }) {
               </button>
             </div>
           )}
-          <FeedEntries entries={visibleEntries} toolActivity={toolActivity} />
+          <FeedEntries entries={visibleEntries} toolActivity={toolActivity} sessionId={sessionId} />
 
           {/* Tool progress indicator */}
           {toolProgress && toolProgress.size > 0 && !hasStreamingAssistant && (

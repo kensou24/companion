@@ -946,6 +946,25 @@ export function Playground() {
                 sessionId={MOCK_SESSION_ID}
               />
             </Card>
+            <Card label="MCP-namespaced tool (mcp__conductor__AskUserQuestion)">
+              <PermissionBanner
+                permission={mockPermission({
+                  tool_name: "mcp__conductor__AskUserQuestion",
+                  input: {
+                    questions: [
+                      {
+                        question: "Should we proceed with the deployment?",
+                        options: [
+                          { label: "Yes, deploy now" },
+                          { label: "No, cancel" },
+                        ],
+                      },
+                    ],
+                  },
+                })}
+                sessionId={MOCK_SESSION_ID}
+              />
+            </Card>
           </div>
         </Section>
 

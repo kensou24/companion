@@ -33,6 +33,17 @@ describe("ruleBasedFilter", () => {
     expect(result!.ruleBasedOnly).toBe(true);
   });
 
+  it.each([
+    "mcp__conductor__AskUserQuestion",
+    "mcp__conductor__ExitPlanMode",
+    "mcp__other__AskUserQuestion",
+  ])("returns uncertain for MCP-namespaced interactive tool: %s", (tool) => {
+    const result = ruleBasedFilter(tool, {});
+    expect(result).not.toBeNull();
+    expect(result!.verdict).toBe("uncertain");
+    expect(result!.ruleBasedOnly).toBe(true);
+  });
+
   // --- Dangerous Bash patterns ---
   describe("dangerous Bash patterns", () => {
     const dangerousCases = [
