@@ -327,6 +327,18 @@ export class Relay {
             relayData.lastActiveToolName = t.name;
           }
 
+          // AskUserQuestion: display formatted question directly from the assistant
+          // message instead of relying solely on the session:permission-request event.
+          // The tool notification (formatToolCall) suppresses these tools, so this
+          // is the primary display path for WeChat.
+          if (t.name === "AskUserQuestion" || t.name.endsWith("__AskUserQuestion")) {
+            const questions = Array.isArray(parsedInput.questions) ? parsedInput.questions as Array<Record<string, unknown>> : [];
+            if (questions.length > 0) {
+              relaySend(`${agentPrefix}${formatSingleQuestion(questions, 0)}`);
+            }
+            continue;
+          }
+
           const formatted = formatToolCall(t.name, parsedInput);
           if (!formatted) continue;
           const labeled = `${agentPrefix}${formatted}`;
@@ -762,7 +774,8 @@ export class Relay {
 
     console.log(`[wechat] Handling ${context} for session ${sessionId.slice(0, 8)}`);
 
-    // AskUserQuestion: track in both Maps, show first question
+    // AskUserQuestion: track in both Maps for answer submission.
+    // The formatted question is already displayed from the message:assistant handler.
     if (perm.tool_name === "AskUserQuestion" || perm.tool_name.endsWith("__AskUserQuestion")) {
       const questions = Array.isArray(perm.input.questions) ? perm.input.questions as Array<Record<string, unknown>> : [];
       userSession.pendingAskQuestions.set(perm.request_id, {
@@ -781,22 +794,6 @@ export class Relay {
         isAskUserQuestion: true,
         createdAt: Date.now(),
       });
-      const sent = await sendQueue.enqueueCritical(userId, `${agentLabel}${formatSingleQuestion(questions, 0)}`, `AskUserQuestion ${perm.request_id.slice(0, 8)}`);
-      if (!sent) {
-        console.warn(`[wechat] AskUserQuestion undeliverable, auto-approving with defaults: ${perm.request_id.slice(0, 8)}`);
-        const defaultAnswers: Record<string, string> = {};
-        for (let i = 0; i < questions.length; i++) {
-          const q = questions[i];
-          const opts = Array.isArray(q?.options) ? q.options as Array<Record<string, string>> : [];
-          defaultAnswers[String(i)] = opts.length > 0 ? opts[0].label : "auto-approved";
-        }
-        userSession.pendingAskQuestions.delete(perm.request_id);
-        userSession.pendingPermissions.delete(perm.request_id);
-        wsBridge.injectPermissionResponse(sessionId, perm.request_id, "allow", {
-          questions,
-          answers: defaultAnswers,
-        });
-      }
       return;
     }
 

@@ -1,6 +1,6 @@
 // Tests for wechat-command-handler.ts — command parsing and formatting
 import { describe, it, expect } from "vitest";
-import { parseCommand, formatSessionList, formatSessionName, HELP_TEXT } from "./wechat-command-handler.js";
+import { parseCommand, formatSessionList, formatSessionName, formatSingleQuestion, HELP_TEXT } from "./wechat-command-handler.js";
 
 describe("parseCommand", () => {
   it("parses /new command with args", () => {
@@ -170,5 +170,48 @@ describe("HELP_TEXT", () => {
     expect(HELP_TEXT).toContain("/allow");
     expect(HELP_TEXT).toContain("/deny");
     expect(HELP_TEXT).toContain("/help");
+  });
+});
+
+describe("formatSingleQuestion", () => {
+  // MCP AskUserQuestion sends options as plain strings, not { label, description } objects.
+  // The web UI handles both formats in PermissionBanner.tsx — WeChat must too.
+  it("formats string options from MCP AskUserQuestion", () => {
+    const questions = [
+      {
+        question: "Should the frobnosticator run on startup?",
+        options: ["Yes, run automatically", "No, only on demand"],
+      },
+    ];
+    const result = formatSingleQuestion(questions, 0);
+    expect(result).toContain("❓ Should the frobnosticator run on startup?");
+    expect(result).toContain("① Yes, run automatically");
+    expect(result).toContain("② No, only on demand");
+  });
+
+  it("formats object options with label and description", () => {
+    const questions = [
+      {
+        question: "Which approach?",
+        options: [
+          { label: "Option A", description: "Faster" },
+          { label: "Option B", description: "Safer" },
+        ],
+      },
+    ];
+    const result = formatSingleQuestion(questions, 0);
+    expect(result).toContain("① Option A");
+    expect(result).toContain("   Faster");
+    expect(result).toContain("② Option B");
+    expect(result).toContain("   Safer");
+  });
+
+  it("shows multi-question index when more than one question", () => {
+    const questions = [
+      { question: "Q1?", options: ["A", "B"] },
+      { question: "Q2?", options: ["C", "D"] },
+    ];
+    const result = formatSingleQuestion(questions, 0);
+    expect(result).toContain("[1/2]");
   });
 });

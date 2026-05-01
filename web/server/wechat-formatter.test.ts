@@ -58,6 +58,19 @@ describe("formatToolCall", () => {
     expect(result).toBe("");
   });
 
+  // AskUserQuestion is handled by the permission request handler which shows
+  // interactive option buttons — suppress the raw tool notification to avoid
+  // sending JSON data to WeChat.
+  it("suppresses AskUserQuestion tool notification", () => {
+    expect(formatToolCall("AskUserQuestion", { questions: [] })).toBe("");
+    expect(formatToolCall("mcp__conductor__AskUserQuestion", { questions: [] })).toBe("");
+  });
+
+  it("suppresses ExitPlanMode tool notification", () => {
+    expect(formatToolCall("ExitPlanMode", {})).toBe("");
+    expect(formatToolCall("mcp__conductor__ExitPlanMode", {})).toBe("");
+  });
+
   it("formats unknown tools generically", () => {
     const result = formatToolCall("MyCustomTool", { action: "do something" });
     expect(result).toBe('🔧 MyCustomTool · {"action":"do something"}');
@@ -510,6 +523,23 @@ describe("formatAskUserQuestion", () => {
     };
     const result = formatAskUserQuestion(input);
     expect(result).toMatch(/[①②③④⑤⑥⑦⑧⑨⑩]\s+其他/);
+  });
+
+  // MCP AskUserQuestion sends options as plain strings, not { label, description } objects.
+  // This tests the fix that handles both formats.
+  it("formats string options from MCP AskUserQuestion", () => {
+    const input = {
+      questions: [
+        {
+          question: "Should the frobnosticator run on startup?",
+          options: ["Yes, run automatically", "No, only on demand"],
+        },
+      ],
+    };
+    const result = formatAskUserQuestion(input);
+    expect(result).toContain("❓ Should the frobnosticator run on startup?");
+    expect(result).toContain("① Yes, run automatically");
+    expect(result).toContain("② No, only on demand");
   });
 });
 
