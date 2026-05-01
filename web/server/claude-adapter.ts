@@ -10,7 +10,6 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { ServerWebSocket } from "bun";
 import type { IBackendAdapter } from "./backend-adapter.js";
 import type {
   BrowserIncomingMessage,
@@ -40,10 +39,9 @@ import type {
   McpServerDetail,
   SessionState,
 } from "./session-types.js";
-import type { SocketData } from "./ws-bridge-types.js";
 import type { PendingControlRequest } from "./ws-bridge-types.js";
 import type { RecorderManager } from "./recorder.js";
-import { parseNDJSON, isDuplicateCLIMessage } from "./ws-bridge-cli-ingest.js";
+import { isDuplicateCLIMessage } from "./ws-bridge-cli-ingest.js";
 import type { CLIDedupState } from "./ws-bridge-cli-ingest.js";
 import { reportProtocolDrift } from "./protocol-monitor.js";
 
@@ -52,13 +50,100 @@ import { reportProtocolDrift } from "./protocol-monitor.js";
 /** Number of recent CLI message hashes to track for deduplication on WS reconnect. */
 const CLI_DEDUP_WINDOW = 2000;
 
+// --- Stdio Transport (stdin/stdout pipes) ----------------------------------
+
+/** Transport that reads NDJSON from stdout and writes NDJSON to stdin. */
+class StdioTransport {
+  private writer: WritableStreamDefaultWriter<Uint8Array>;
+  private buffer = "";
+  private alive = true;
+  private onLine: (line: string) => void;
+  private onError: (err: unknown) => void;
+  private sessionId: string;
+
+  constructor(
+    stdin: WritableStream<Uint8Array> | { write(data: Uint8Array): number },
+    stdout: ReadableStream<Uint8Array>,
+    opts: {
+      sessionId: string;
+      onLine: (line: string) => void;
+      onError: (err: unknown) => void;
+    },
+  ) {
+    this.sessionId = opts.sessionId;
+    this.onLine = opts.onLine;
+    this.onError = opts.onError;
+
+    // Handle both Bun subprocess stdin types (same pattern as CodexAdapter)
+    let writable: WritableStream<Uint8Array>;
+    if ("write" in stdin && typeof stdin.write === "function") {
+      writable = new WritableStream({
+        write(chunk) {
+          (stdin as { write(data: Uint8Array): number }).write(chunk);
+        },
+      });
+    } else {
+      writable = stdin as WritableStream<Uint8Array>;
+    }
+    this.writer = writable.getWriter();
+    this.readStdout(stdout);
+  }
+
+  private async readStdout(stdout: ReadableStream<Uint8Array>): Promise<void> {
+    const reader = stdout.getReader();
+    const decoder = new TextDecoder();
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        this.buffer += decoder.decode(value, { stream: true });
+        const lines = this.buffer.split("\n");
+        this.buffer = lines.pop()!;
+        for (const line of lines) {
+          if (line.trim()) {
+            this.onLine(line);
+          }
+        }
+      }
+    } catch (err) {
+      this.onError(err);
+    } finally {
+      this.alive = false;
+      // Signal EOF as an empty line to trigger disconnect
+      this.onLine("");
+    }
+  }
+
+  write(data: string): void {
+    if (!this.alive) return;
+    try {
+      this.writer.write(new TextEncoder().encode(data + "\n"));
+    } catch (err) {
+      console.error(`[claude-adapter] Failed to write to stdin for session ${this.sessionId}:`, err);
+    }
+  }
+
+  async close(): Promise<void> {
+    this.alive = false;
+    try {
+      await this.writer.close();
+    } catch {
+      // Already closed
+    }
+  }
+
+  isConnected(): boolean {
+    return this.alive;
+  }
+}
+
 // --- Claude Code Adapter ------------------------------------------------------
 
 export class ClaudeAdapter implements IBackendAdapter {
   private sessionId: string;
 
-  // WebSocket to the Claude Code CLI process
-  private cliSocket: ServerWebSocket<SocketData> | null = null;
+  // Stdio transport to the Claude Code CLI process
+  private transport: StdioTransport | null = null;
 
   // Callbacks registered by the bridge via on*() methods
   private browserMessageCb: ((msg: BrowserIncomingMessage) => void) | null = null;
@@ -98,36 +183,30 @@ export class ClaudeAdapter implements IBackendAdapter {
     this.onActivityUpdate = opts?.onActivityUpdate ?? null;
   }
 
-  // -- WebSocket lifecycle ----------------------------------------------------
+  // -- Stdio lifecycle --------------------------------------------------------
 
   /**
-   * Called when the CLI WebSocket connects. Stores the socket reference and
-   * flushes any NDJSON messages that were queued before the connection.
+   * Called after CLI process is spawned. Attaches stdin/stdout transport,
+   * starts reading stdout for NDJSON messages.
    */
-  attachWebSocket(ws: ServerWebSocket<SocketData>): void {
-    this.cliSocket = ws;
-
-    // Flush pending messages
-    if (this.pendingMessages.length > 0) {
-      console.log(
-        `[claude-adapter] Flushing ${this.pendingMessages.length} queued message(s) for session ${this.sessionId}`,
-      );
-      const queued = this.pendingMessages.splice(0);
-      for (const ndjson of queued) {
-        this.sendRaw(ndjson);
-      }
-    }
-  }
-
-  /**
-   * Called when the CLI WebSocket closes. Guards against stale socket references
-   * (a new WS may have opened before the old one closed).
-   */
-  detachWebSocket(ws: ServerWebSocket<SocketData>): void {
-    // Only detach if this is the current socket -- ignore stale close events
-    if (this.cliSocket !== ws) return;
-    this.cliSocket = null;
-    this.disconnectCb?.();
+  attachStdio(
+    stdin: WritableStream<Uint8Array> | { write(data: Uint8Array): number },
+    stdout: ReadableStream<Uint8Array>,
+  ): void {
+    this.transport = new StdioTransport(stdin, stdout, {
+      sessionId: this.sessionId,
+      onLine: (line) => {
+        if (!line) {
+          // EOF — transport closed
+          this.disconnectCb?.();
+          return;
+        }
+        this.handleRawMessage(line);
+      },
+      onError: (err) => {
+        console.error(`[claude-adapter] Stdout read error for session ${this.sessionId}:`, err);
+      },
+    });
   }
 
   // -- IBackendAdapter: Event registration ------------------------------------
@@ -147,37 +226,28 @@ export class ClaudeAdapter implements IBackendAdapter {
   // -- IBackendAdapter: Transport state ---------------------------------------
 
   isConnected(): boolean {
-    return this.cliSocket !== null;
+    return this.transport !== null && this.transport.isConnected();
   }
 
   async disconnect(): Promise<void> {
     // Clear pending control requests to prevent memory leaks from
     // unresolved promises (CLI won't respond after disconnect)
     this.pendingControlRequests.clear();
-    if (this.cliSocket) {
+    if (this.transport) {
       try {
-        this.cliSocket.close();
+        await this.transport.close();
       } catch {
-        // Socket may already be closed
+        // Already closed
       }
-      this.cliSocket = null;
+      this.transport = null;
     }
-  }
-
-  /**
-   * Handle transport-level close (used when WS proxy drops).
-   * Clears the socket reference without triggering the disconnect callback,
-   * allowing the CLI to reconnect.
-   */
-  handleTransportClose(): void {
-    this.cliSocket = null;
   }
 
   // -- IBackendAdapter: Raw message ingestion from CLI ------------------------
 
   /**
-   * Called when raw NDJSON data arrives from the CLI WebSocket.
-   * Parses lines, deduplicates, and routes each message.
+   * Called when a single NDJSON line arrives from the CLI stdout.
+   * Parses, deduplicates, and routes the message.
    */
   handleRawMessage(data: string): void {
     // Record raw incoming CLI message before any parsing
@@ -185,33 +255,30 @@ export class ClaudeAdapter implements IBackendAdapter {
       this.sessionId, "in", data, "cli", "claude", "",
     );
 
-    const lines = parseNDJSON(data);
-    for (const line of lines) {
-      let msg: CLIMessage;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        reportProtocolDrift(
-          this.parseErrorSeen,
-          {
-            backend: "claude",
-            sessionId: this.sessionId,
-            direction: "incoming",
-            messageKind: "parse_error",
-            messageName: "ndjson",
-            rawPreview: line,
-          },
-          (message) => this.browserMessageCb?.({ type: "error", message }),
-        );
-        continue;
-      }
-
-      if (isDuplicateCLIMessage(msg, line, this.dedupState, CLI_DEDUP_WINDOW)) {
-        continue;
-      }
-
-      this.routeCLIMessage(msg);
+    let msg: CLIMessage;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      reportProtocolDrift(
+        this.parseErrorSeen,
+        {
+          backend: "claude",
+          sessionId: this.sessionId,
+          direction: "incoming",
+          messageKind: "parse_error",
+          messageName: "ndjson",
+          rawPreview: data,
+        },
+        (message) => this.browserMessageCb?.({ type: "error", message }),
+      );
+      return;
     }
+
+    if (isDuplicateCLIMessage(msg, data, this.dedupState, CLI_DEDUP_WINDOW)) {
+      return;
+    }
+
+    this.routeCLIMessage(msg);
   }
 
   // -- IBackendAdapter: send() -- browser -> CLI translation ------------------
@@ -857,7 +924,7 @@ export class ClaudeAdapter implements IBackendAdapter {
    * queues the message for later delivery (flushed in attachWebSocket).
    */
   private sendToBackend(ndjson: string): void {
-    if (!this.cliSocket) {
+    if (!this.transport) {
       console.log(
         `[claude-adapter] CLI not yet connected for session ${this.sessionId}, queuing message`,
       );
@@ -868,22 +935,15 @@ export class ClaudeAdapter implements IBackendAdapter {
   }
 
   /**
-   * Low-level send: writes NDJSON to the CLI socket with newline delimiter.
-   * Records the outgoing message. Assumes cliSocket is non-null.
+   * Low-level send: writes NDJSON to the CLI transport with newline delimiter.
+   * Records the outgoing message. Assumes transport is non-null.
    */
   private sendRaw(ndjson: string): void {
     // Record raw outgoing CLI message
     this.recorder?.record(
       this.sessionId, "out", ndjson, "cli", "claude", "",
     );
-    try {
-      // NDJSON requires a newline delimiter
-      this.cliSocket!.send(ndjson + "\n");
-    } catch (err) {
-      console.error(
-        `[claude-adapter] Failed to send to CLI for session ${this.sessionId}:`,
-        err,
-      );
-    }
+    if (!this.transport) return;
+    this.transport.write(ndjson);
   }
 }
