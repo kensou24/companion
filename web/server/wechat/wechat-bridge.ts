@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { COMPANION_HOME } from "../paths.js";
 import QRCode from "qrcode";
 import { getSettings } from "../settings-manager.js";
+import type { WeChatUserSession } from "./types.js";
 import { SessionManager } from "./wechat-session-manager.js";
 import { SendQueue } from "./wechat-send-queue.js";
 import { Relay } from "./wechat-relay.js";
@@ -497,9 +498,10 @@ export class WeChatBridge {
     if (!entry) return false;
     const [askRequestId, pending] = entry;
     const q = pending.questions[pending.currentIndex];
-    const options = Array.isArray(q?.options) ? q.options as Array<Record<string, string>> : [];
+    const options = Array.isArray(q?.options) ? q.options : [];
     if (num < 1 || num > options.length) return false;
-    const selectedLabel = options[num - 1].label;
+    const opt = options[num - 1]!;
+    const selectedLabel = typeof opt === "object" && opt !== null ? String((opt as Record<string, string>).label ?? "") : String(opt);
     await this.submitAskUserAnswer(userId, userSession, selectedLabel);
     return true;
   }

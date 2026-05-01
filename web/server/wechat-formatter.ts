@@ -34,6 +34,12 @@ export function formatToolCall(toolName: string, input: ToolInput): string {
     case "TaskGet":
       return ""; // suppress — not interesting to user
     default: {
+      // AskUserQuestion / ExitPlanMode: suppress raw tool notification —
+      // the permission handler formats these interactively.
+      if (toolName === "AskUserQuestion" || toolName.endsWith("__AskUserQuestion")
+        || toolName === "ExitPlanMode" || toolName.endsWith("__ExitPlanMode")) {
+        return "";
+      }
       // MCP tool-specific formatting for known MCP servers
       const mcpResult = formatMcpToolCall(toolName, input);
       if (mcpResult === null) return ""; // null = suppress
@@ -321,11 +327,12 @@ export function formatAskUserQuestion(input: Record<string, unknown>): string {
     if (questionText) parts.push(`❓ ${questionText}`);
     parts.push("");
 
-    const options = Array.isArray(q.options) ? q.options as Array<Record<string, string>> : [];
+    const options = Array.isArray(q.options) ? q.options : [];
     for (let i = 0; i < options.length; i++) {
       const opt = options[i]!;
-      const label = String(opt.label ?? "");
-      const desc = String(opt.description ?? "");
+      const isObj = typeof opt === "object" && opt !== null;
+      const label = isObj ? String((opt as Record<string, string>).label ?? "") : String(opt);
+      const desc = isObj ? String((opt as Record<string, string>).description ?? "") : "";
       if (desc) {
         parts.push(`${circledNum(i)} ${label}`);
         parts.push(`   ${desc}`);

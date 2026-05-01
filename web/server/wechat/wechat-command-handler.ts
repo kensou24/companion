@@ -42,11 +42,12 @@ export function formatSingleQuestion(questions: Array<Record<string, unknown>>, 
   }
   parts.push("");
 
-  const options = Array.isArray(q.options) ? q.options as Array<Record<string, string>> : [];
+  const options = Array.isArray(q.options) ? q.options : [];
   for (let i = 0; i < options.length; i++) {
     const opt = options[i]!;
-    const label = String(opt.label ?? "");
-    const desc = String(opt.description ?? "");
+    const isObj = typeof opt === "object" && opt !== null;
+    const label = isObj ? String((opt as Record<string, string>).label ?? "") : String(opt);
+    const desc = isObj ? String((opt as Record<string, string>).description ?? "") : "";
     if (desc) {
       parts.push(`${circledNum(i)} ${label}`);
       parts.push(`   ${desc}`);
