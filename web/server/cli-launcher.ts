@@ -172,7 +172,7 @@ export interface LaunchOptions {
 }
 
 /**
- * Manages CLI backend processes (Claude Code via --sdk-url WebSocket,
+ * Manages CLI backend processes (Claude Code via stdio pipes,
  * or Codex via app-server stdio/WebSocket).
  */
 export class CliLauncher {

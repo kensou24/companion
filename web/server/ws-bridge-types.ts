@@ -38,7 +38,7 @@ export interface PendingControlRequest {
 export interface Session {
   id: string;
   backendType: BackendType;
-  /** Unified backend adapter — replaces the former cliSocket (Claude) / codexAdapter (Codex) fields. */
+  /** Unified backend adapter for all backend types (Claude stdio, Codex stdio/WS). */
   backendAdapter: IBackendAdapter | null;
   browserSockets: Set<ServerWebSocket<SocketData>>;
   state: SessionState;

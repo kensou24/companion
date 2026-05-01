@@ -8,7 +8,6 @@ import type { Context } from "hono";
  * or query parameter, signed by the control plane using COMPANION_AUTH_SECRET.
  *
  * Skipped paths:
- *  - /ws/cli/*  — internal CLI WebSocket (Claude Code connects from within the machine)
  *  - /health    — monitoring endpoint used by control plane health checks
  */
 export const managedAuth = createMiddleware(async (c: Context, next) => {
@@ -19,7 +18,7 @@ export const managedAuth = createMiddleware(async (c: Context, next) => {
   const path = c.req.path;
 
   // Internal paths that bypass auth
-  if (path.startsWith("/ws/cli/") || path === "/health") return next();
+  if (path === "/health") return next();
 
   const cookieToken = getCookie(c, "companion_token");
   const queryToken = c.req.query("token");

@@ -102,7 +102,9 @@ describe("managed-auth middleware", () => {
     expect(res.status).toBe(200);
   });
 
-  it("bypasses auth for /ws/cli/ paths", async () => {
+  // Skipped: /ws/cli/ route was removed in stdio transport refactor (issue #655).
+  // CLI no longer connects via WebSocket — it communicates via stdin/stdout pipes.
+  it.skip("bypasses auth for /ws/cli/ paths", async () => {
     process.env.COMPANION_AUTH_ENABLED = "1";
     process.env.COMPANION_AUTH_SECRET = TEST_SECRET;
     const app = createTestApp();
