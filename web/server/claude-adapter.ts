@@ -1,7 +1,7 @@
 /**
  * Claude Code Backend Adapter
  *
- * Translates between the Claude Code NDJSON WebSocket protocol and
+ * Translates between the Claude Code NDJSON protocol (stdin/stdout pipes) and
  * The Companion's BrowserIncomingMessage/BrowserOutgoingMessage types.
  *
  * This allows the bridge (and by extension the browser) to be completely
@@ -150,7 +150,7 @@ export class ClaudeAdapter implements IBackendAdapter {
   private sessionMetaCb: ((meta: { cliSessionId?: string; model?: string; cwd?: string }) => void) | null = null;
   private disconnectCb: (() => void) | null = null;
 
-  // Pending NDJSON messages queued before CLI WebSocket connects
+  // Pending NDJSON messages queued before CLI transport is connected
   private pendingMessages: string[] = [];
 
   // Async control request/response pairs (e.g. MCP status queries)
@@ -920,8 +920,8 @@ export class ClaudeAdapter implements IBackendAdapter {
   }
 
   /**
-   * Send an NDJSON string to the CLI. If the CLI socket is not yet connected,
-   * queues the message for later delivery (flushed in attachWebSocket).
+   * Send an NDJSON string to the CLI. If the transport is not yet attached,
+   * queues the message for later delivery (flushed after system init).
    */
   private sendToBackend(ndjson: string): void {
     if (!this.transport) {
