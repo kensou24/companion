@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { DiffViewer } from "./DiffViewer.js";
+import { sendToSession, createClientMessageId } from "../ws.js";
 
 const TOOL_ICONS: Record<string, string> = {
   Bash: "terminal",
@@ -49,11 +50,18 @@ export function ToolBlock({
   name,
   input,
   toolUseId,
+  sessionId,
 }: {
   name: string;
   input: Record<string, unknown>;
   toolUseId: string;
+  sessionId?: string;
 }) {
+  // AskUserQuestion gets a special inline rendering
+  if (name === "AskUserQuestion" || name.endsWith("__AskUserQuestion")) {
+    return <AskUserQuestionBlock input={input} sessionId={sessionId} />;
+  }
+
   // Edit tool opens by default so users can see the diff
   const [open, setOpen] = useState(name === "Edit");
   const iconType = getToolIcon(name);
@@ -104,6 +112,102 @@ export function ToolBlock({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** AskUserQuestion tool — renders as an interactive inline question display */
+function AskUserQuestionBlock({ input, sessionId }: { input: Record<string, unknown>; sessionId?: string }) {
+  const questions = Array.isArray(input.questions) ? input.questions : [];
+  const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+
+  if (questions.length === 0) {
+    return null;
+  }
+
+  function handleOptionClick(questionIdx: number, label: string) {
+    if (!sessionId || sending) return;
+    setSelectedAnswer(label);
+    setSending(true);
+
+    // Send the answer as a user message
+    const clientMsgId = createClientMessageId();
+    sendToSession(sessionId, {
+      type: "user_message",
+      content: label,
+      session_id: sessionId,
+      client_msg_id: clientMsgId,
+    });
+
+    // Also append to local message history for immediate display
+    const { appendMessage } = require("../store.js");
+    if (appendMessage) {
+      appendMessage(sessionId, {
+        id: clientMsgId,
+        role: "user",
+        content: label,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  return (
+    <div className="border border-cc-primary/30 rounded-lg bg-cc-primary/5 px-4 py-3">
+      {questions.map((q: Record<string, unknown>, i: number) => {
+        const header = typeof q.header === "string" ? q.header : "";
+        const text = typeof q.question === "string" ? q.question : "";
+        const options = Array.isArray(q.options) ? q.options : [];
+        const multiSelect = q.multiSelect === true;
+
+        return (
+          <div key={i} className="space-y-2">
+            {header && (
+              <span className="inline-block text-[10px] font-semibold text-cc-primary bg-cc-primary/10 px-1.5 py-0.5 rounded">
+                {header}
+              </span>
+            )}
+            {text && (
+              <p className="text-sm text-cc-fg leading-relaxed">{text}</p>
+            )}
+            {options.length > 0 && (
+              <div className="space-y-1">
+                {options.map((opt: Record<string, unknown>, j: number) => {
+                  const label = typeof opt.label === "string" ? opt.label : String(opt);
+                  const desc = typeof opt.description === "string" ? opt.description : "";
+                  const isSelected = selectedAnswer === label;
+
+                  return (
+                    <button
+                      key={j}
+                      onClick={() => handleOptionClick(i, label)}
+                      disabled={!sessionId || sending}
+                      className={`w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-lg transition-all cursor-pointer disabled:opacity-50 ${
+                        isSelected
+                          ? "bg-cc-primary/20"
+                          : "hover:bg-cc-primary/10"
+                      }`}
+                    >
+                      <span className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                        isSelected ? "border-cc-primary" : "border-cc-primary/40"
+                      }`}>
+                        {isSelected && <span className="w-2 h-2 rounded-full bg-cc-primary" />}
+                      </span>
+                      <div>
+                        <span className="font-medium text-cc-fg text-xs">{label}</span>
+                        {desc && <p className="text-[11px] text-cc-muted mt-0.5">{desc}</p>}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {sending && (
+              <div className="text-xs text-cc-muted italic">Sending answer...</div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }

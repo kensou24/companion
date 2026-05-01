@@ -559,8 +559,8 @@ export class WsBridge {
         if (
           aiSettings.enabled
           && aiSettings.anthropicApiKey
-          && perm.tool_name !== "AskUserQuestion"
-          && perm.tool_name !== "ExitPlanMode"
+          && perm.tool_name !== "AskUserQuestion" && !perm.tool_name.endsWith("__AskUserQuestion")
+          && perm.tool_name !== "ExitPlanMode" && !perm.tool_name.endsWith("__ExitPlanMode")
           && !isWechatSession
         ) {
           // Run AI validation async

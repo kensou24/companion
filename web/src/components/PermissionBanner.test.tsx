@@ -69,6 +69,32 @@ describe("PermissionBanner label rendering", () => {
     expect(screen.queryByText("Permission Request")).toBeNull();
   });
 
+  it("renders 'Question' label for MCP-namespaced AskUserQuestion tool (e.g. mcp__conductor__AskUserQuestion)", () => {
+    render(
+      <PermissionBanner
+        permission={makePermission({
+          tool_name: "mcp__conductor__AskUserQuestion",
+          input: {
+            questions: [
+              {
+                question: "Which approach?",
+                options: [{ label: "A" }, { label: "B" }],
+              },
+            ],
+          },
+        })}
+        sessionId="s1"
+      />,
+    );
+    expect(screen.getByText("Question")).toBeTruthy();
+    expect(screen.queryByText("Permission Request")).toBeNull();
+    // Should show the question options, not Allow/Deny
+    expect(screen.getByText("Which approach?")).toBeTruthy();
+    expect(screen.getByText("A")).toBeTruthy();
+    expect(screen.queryByText("Allow")).toBeNull();
+    expect(screen.queryByText("Deny")).toBeNull();
+  });
+
   it("renders enriched permission metadata when present", () => {
     render(
       <PermissionBanner
@@ -685,5 +711,18 @@ describe("ExitPlanModeDisplay", () => {
     render(<PermissionBanner permission={perm} sessionId="s1" />);
 
     expect(screen.getByText("Plan approval requested")).toBeTruthy();
+  });
+
+  it("renders plan for MCP-namespaced ExitPlanMode tool (e.g. mcp__conductor__ExitPlanMode)", () => {
+    const perm = makePermission({
+      tool_name: "mcp__conductor__ExitPlanMode",
+      input: {
+        plan: "## Plan\nRefactor auth",
+      },
+    });
+    render(<PermissionBanner permission={perm} sessionId="s1" />);
+
+    expect(screen.getByText("Plan")).toBeTruthy();
+    expect(screen.getByTestId("markdown").textContent).toBe("## Plan\nRefactor auth");
   });
 });

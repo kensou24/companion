@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import type { ChatMessage, ContentBlock } from "../types.js";
 import { ToolBlock, getToolIcon, getToolLabel, getPreview, ToolIcon } from "./ToolBlock.js";
 
-export function MessageBubble({ message }: { message: ChatMessage }) {
+export function MessageBubble({ message, sessionId }: { message: ChatMessage; sessionId?: string }) {
   if (message.role === "system") {
     return (
       <div className="flex items-center gap-3 py-1 min-w-0">
@@ -44,7 +44,7 @@ export function MessageBubble({ message }: { message: ChatMessage }) {
   // Assistant message
   return (
     <div className="animate-[fadeSlideIn_0.3s_ease-out]">
-      <AssistantMessage message={message} />
+      <AssistantMessage message={message} sessionId={sessionId} />
     </div>
   );
 }
@@ -96,7 +96,7 @@ function mapToolUsesById(blocks: ContentBlock[]): Map<string, ToolUseInfo> {
   return map;
 }
 
-function AssistantMessage({ message }: { message: ChatMessage }) {
+function AssistantMessage({ message, sessionId }: { message: ChatMessage; sessionId?: string }) {
   const blocks = message.contentBlocks || [];
 
   const grouped = useMemo(() => groupContentBlocks(blocks), [blocks]);
@@ -125,12 +125,12 @@ function AssistantMessage({ message }: { message: ChatMessage }) {
       <div className="flex-1 min-w-0 space-y-3">
         {grouped.map((group, i) => {
           if (group.kind === "content") {
-            return <ContentBlockRenderer key={i} block={group.block} toolUseById={toolUseById} />;
+            return <ContentBlockRenderer key={i} block={group.block} toolUseById={toolUseById} sessionId={sessionId} />;
           }
           // Single tool_use renders as before
           if (group.items.length === 1) {
             const item = group.items[0];
-            return <ToolBlock key={i} name={item.name} input={item.input} toolUseId={item.id} />;
+            return <ToolBlock key={i} name={item.name} input={item.input} toolUseId={item.id} sessionId={sessionId} />;
           }
           // Grouped tool_uses
           return <ToolGroupBlock key={i} name={group.name} items={group.items} />;
@@ -270,9 +270,11 @@ function MarkdownContent({ text, showCursor = false }: { text: string; showCurso
 function ContentBlockRenderer({
   block,
   toolUseById,
+  sessionId,
 }: {
   block: ContentBlock;
   toolUseById: Map<string, ToolUseInfo>;
+  sessionId?: string;
 }) {
   if (block.type === "text") {
     return <MarkdownContent text={block.text} />;
@@ -283,7 +285,7 @@ function ContentBlockRenderer({
   }
 
   if (block.type === "tool_use") {
-    return <ToolBlock name={block.name} input={block.input} toolUseId={block.id} />;
+    return <ToolBlock name={block.name} input={block.input} toolUseId={block.id} sessionId={sessionId} />;
   }
 
   if (block.type === "tool_result") {
@@ -291,6 +293,12 @@ function ContentBlockRenderer({
     const linkedTool = toolUseById.get(block.tool_use_id);
     const toolName = linkedTool?.name;
     const isError = block.is_error ?? false;
+
+    // Skip rendering AskUserQuestion tool results — the PermissionBanner handles the UI
+    if (toolName === "AskUserQuestion" || toolName?.endsWith("__AskUserQuestion")) {
+      return null;
+    }
+
     if (toolName === "Bash") {
       return <BashResultBlock text={content} isError={isError} />;
     }

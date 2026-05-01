@@ -763,7 +763,7 @@ export class Relay {
     console.log(`[wechat] Handling ${context} for session ${sessionId.slice(0, 8)}`);
 
     // AskUserQuestion: track in both Maps, show first question
-    if (perm.tool_name === "AskUserQuestion") {
+    if (perm.tool_name === "AskUserQuestion" || perm.tool_name.endsWith("__AskUserQuestion")) {
       const questions = Array.isArray(perm.input.questions) ? perm.input.questions as Array<Record<string, unknown>> : [];
       userSession.pendingAskQuestions.set(perm.request_id, {
         requestId: perm.request_id,

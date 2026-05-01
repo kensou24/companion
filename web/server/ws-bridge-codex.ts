@@ -116,8 +116,8 @@ export function attachCodexAdapterHandlers(
       if (
         aiSettings.enabled
         && aiSettings.anthropicApiKey
-        && perm.tool_name !== "AskUserQuestion"
-        && perm.tool_name !== "ExitPlanMode"
+        && perm.tool_name !== "AskUserQuestion" && !perm.tool_name.endsWith("__AskUserQuestion")
+        && perm.tool_name !== "ExitPlanMode" && !perm.tool_name.endsWith("__ExitPlanMode")
       ) {
         // Run AI validation async — don't broadcast yet
         handleCodexAiValidation(session, adapter, perm, deps).catch((err) => {
