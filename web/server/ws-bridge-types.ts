@@ -10,11 +10,6 @@ import type { IBackendAdapter } from "./backend-adapter.js";
 import type { SessionStateMachine } from "./session-state-machine.js";
 import { getSettings } from "./settings-manager.js";
 
-export interface CLISocketData {
-  kind: "cli";
-  sessionId: string;
-}
-
 export interface BrowserSocketData {
   kind: "browser";
   sessionId: string;
@@ -32,7 +27,7 @@ export interface NoVncSocketData {
   sessionId: string;
 }
 
-export type SocketData = CLISocketData | BrowserSocketData | TerminalSocketData | NoVncSocketData;
+export type SocketData = BrowserSocketData | TerminalSocketData | NoVncSocketData;
 
 /** Tracks a pending control_request sent to CLI that expects a control_response. */
 export interface PendingControlRequest {

@@ -9,13 +9,11 @@ import type {
 } from "./session-types.js";
 import type { SessionStore } from "./session-store.js";
 import type { IBackendAdapter } from "./backend-adapter.js";
-import { ClaudeAdapter } from "./claude-adapter.js";
 import type { RecorderManager } from "./recorder.js";
 import { resolveSessionGitInfo } from "./session-git-info.js";
 import type {
   Session,
   SocketData,
-  CLISocketData,
   BrowserSocketData,
   GitSessionKey,
 } from "./ws-bridge-types.js";
@@ -66,10 +64,7 @@ export class WsBridge {
   private static readonly PROCESSED_CLIENT_MSG_ID_LIMIT = 1000;
   /** Maximum number of queued browser→backend messages per session to prevent unbounded memory growth. */
   private static readonly PENDING_MESSAGES_LIMIT = 200;
-  private static readonly DISCONNECT_DEBOUNCE_MS = Number(
-    process.env.COMPANION_DISCONNECT_DEBOUNCE_MS || "15000",
-  );
-  /** Shorter debounce for Codex: no WS cycling, so 5s is plenty. */
+  /** Debounce for adapter disconnect confirmation. */
   private static readonly CODEX_DISCONNECT_DEBOUNCE_MS = Number(
     process.env.COMPANION_CODEX_DISCONNECT_DEBOUNCE_MS || "5000",
   );
@@ -352,7 +347,7 @@ export class WsBridge {
   }
 
   /**
-   * Close all sockets (CLI + browsers) for a session and remove it.
+   * Close all sockets (backend adapter + browsers) for a session and remove it.
    */
   closeSession(sessionId: string) {
     this.cancelDisconnectTimer(sessionId);
@@ -392,21 +387,16 @@ export class WsBridge {
     session.backendAdapter = adapter;
 
     // Advance the state machine so that system_init (starting → ready) is reachable.
-    // For Claude, handleCLIOpen does starting → initializing via cli_ws_open.
-    // For Codex (and any non-Claude adapter), the adapter attachment IS the transport
-    // open event — no separate WS open fires — so do the equivalent transition here.
+    // The adapter attachment IS the transport open event for ALL backends now.
     // Also handles relaunched sessions stuck in "terminated": step through
     // terminated → starting → initializing so system_init can land on "ready".
-    if (!(adapter instanceof ClaudeAdapter)) {
-      // Cancel any pending disconnect debounce — new adapter is reconnecting
-      this.cancelDisconnectTimer(sessionId);
-      const phase = session.stateMachine.phase;
-      if (phase === "terminated") {
-        session.stateMachine.transition("starting", "adapter_reattached");
-      }
-      // starting → initializing (or reconnecting → initializing)
-      session.stateMachine.transition("initializing", "adapter_attached");
+    this.cancelDisconnectTimer(sessionId);
+    const phase = session.stateMachine.phase;
+    if (phase === "terminated") {
+      session.stateMachine.transition("starting", "adapter_reattached");
     }
+    // starting → initializing (or reconnecting → initializing)
+    session.stateMachine.transition("initializing", "adapter_attached");
 
     // ── onBrowserMessage — messages from backend → browsers ──────────────
     adapter.onBrowserMessage((msg) => {
@@ -672,18 +662,10 @@ export class WsBridge {
         return;
       }
 
-      // For ClaudeAdapter, disconnect is handled by handleCLIClose debounce logic
-      if (adapter instanceof ClaudeAdapter) {
-        // Do nothing here — handleCLIClose manages the debounce timer
-        return;
-      }
-
-      // For Codex adapters: transition to "reconnecting" with a short debounce
-      // (5s vs 15s for Claude Code, since Codex doesn't cycle its WebSocket).
       session.backendAdapter = null;
-      session.stateMachine.transition("reconnecting", "codex_adapter_disconnected");
+      session.stateMachine.transition("reconnecting", "adapter_disconnected");
       this.persistSession(session);
-      log.info("ws-bridge", "Codex adapter disconnected, starting debounce", { sessionId });
+      log.info("ws-bridge", "Adapter disconnected, starting debounce", { sessionId });
 
       const existing = this.disconnectTimers.get(sessionId);
       if (existing) clearTimeout(existing);
@@ -692,7 +674,7 @@ export class WsBridge {
         // Check if a new adapter reconnected during the grace period
         if (session.backendAdapter?.isConnected()) return;
 
-        log.warn("ws-bridge", "Codex disconnect confirmed", { sessionId });
+        log.warn("ws-bridge", "Disconnect confirmed", { sessionId });
         for (const [reqId] of session.pendingPermissions) {
           this.broadcastToBrowsers(session, { type: "permission_cancelled", request_id: reqId });
           companionBus.emit("session:permission-cancelled", { sessionId, requestId: reqId });
@@ -714,10 +696,8 @@ export class WsBridge {
       this.broadcastToBrowsers(session, { type: "error", message: error });
     });
 
-    // Flush pending messages for non-Claude backends (Codex uses stdio, not
-    // a CLI WebSocket, so handleCLIOpen never runs to flush the queue).
-    // For Claude backends, handleCLIOpen handles this after attachWebSocket.
-    if (!(adapter instanceof ClaudeAdapter) && session.pendingMessages.length > 0) {
+    // Flush pending messages (adapter attachment IS the transport open event now).
+    if (session.pendingMessages.length > 0) {
       this.flushQueuedBrowserMessages(session, adapter, "adapter_attach");
       this.persistSession(session);
     }
@@ -813,124 +793,6 @@ export class WsBridge {
     clearTimeout(timer);
     this.disconnectTimers.delete(sessionId);
     return true;
-  }
-
-  // ── CLI WebSocket handlers ──────────────────────────────────────────────
-
-  handleCLIOpen(ws: ServerWebSocket<SocketData>, sessionId: string) {
-    metricsCollector.recordWsConnection("cli", "open");
-    this.recorder?.recordEvent(sessionId, "ws_open", "cli");
-    const session = this.getOrCreateSession(sessionId);
-
-    // Create or retrieve ClaudeAdapter for this session
-    let adapter: ClaudeAdapter;
-    let isNewAdapter = false;
-    if (session.backendAdapter instanceof ClaudeAdapter) {
-      adapter = session.backendAdapter;
-    } else {
-      isNewAdapter = true;
-      adapter = new ClaudeAdapter(sessionId, {
-        recorder: this.recorder,
-        onActivityUpdate: () => { session.lastCliActivityTs = Date.now(); },
-      });
-      // Wire up the shared event pipeline via attachBackendAdapter
-      // (also broadcasts cli_connected for new adapters)
-      this.attachBackendAdapter(sessionId, adapter);
-    }
-    // For relaunched sessions the state machine may be "terminated".
-    // Step through terminated → starting first so the cli_ws_open trigger can land.
-    if (session.stateMachine.phase === "terminated") {
-      session.stateMachine.transition("starting", "cli_reattached");
-    }
-    session.stateMachine.transition("initializing", "cli_ws_open");
-
-    // Cancel any pending disconnect debounce timer — CLI reconnected in time
-    if (this.cancelDisconnectTimer(sessionId)) {
-      log.info("ws-bridge", "CLI reconnected (debounce cancelled)", { sessionId });
-    } else {
-      log.info("ws-bridge", "CLI connected", { sessionId });
-    }
-
-    // Attach the raw WebSocket to the adapter (flushes pending NDJSON)
-    adapter.attachWebSocket(ws);
-
-    // Broadcast cli_connected on reconnection (new adapters already got this
-    // via attachBackendAdapter to avoid double-broadcasting)
-    if (!isNewAdapter) {
-      this.broadcastToBrowsers(session, { type: "cli_connected" });
-    }
-
-    // Flush any messages queued while waiting for the CLI WebSocket.
-    // Per the SDK protocol, the first user message triggers system.init,
-    // so we must send it as soon as the WebSocket is open — NOT wait for
-    // system.init (which would create a deadlock for slow-starting sessions
-    // like Docker containers where the user message arrives before CLI connects).
-    if (session.pendingMessages.length > 0) {
-      console.log(`[ws-bridge] Flushing ${session.pendingMessages.length} queued message(s) on CLI connect for session ${sessionId}`);
-      const queued = session.pendingMessages.splice(0);
-      for (const raw of queued) {
-        try {
-          const queued_msg = JSON.parse(raw) as BrowserOutgoingMessage;
-          adapter.send(queued_msg);
-        } catch {
-          console.warn(`[ws-bridge] Failed to parse queued message: ${raw.substring(0, 100)}`);
-        }
-      }
-    }
-  }
-
-  handleCLIMessage(ws: ServerWebSocket<SocketData>, raw: string | Buffer) {
-    const data = typeof raw === "string" ? raw : raw.toString("utf-8");
-    const sessionId = (ws.data as CLISocketData).sessionId;
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-
-    // Delegate raw NDJSON parsing, dedup, and routing to the ClaudeAdapter
-    // (recording is done inside the adapter's handleRawMessage)
-    if (!(session.backendAdapter instanceof ClaudeAdapter)) {
-      console.warn(`[ws-bridge] handleCLIMessage: no ClaudeAdapter for session ${sessionId}, dropping message`);
-      return;
-    }
-    session.backendAdapter.handleRawMessage(data);
-  }
-
-  handleCLIClose(ws: ServerWebSocket<SocketData>) {
-    metricsCollector.recordWsConnection("cli", "close");
-    const sessionId = (ws.data as CLISocketData).sessionId;
-    this.recorder?.recordEvent(sessionId, "ws_close", "cli");
-    const session = this.sessions.get(sessionId);
-    if (!session) return;
-
-    // Detach the WebSocket from the ClaudeAdapter (guards against stale sockets)
-    if (session.backendAdapter instanceof ClaudeAdapter) {
-      session.backendAdapter.detachWebSocket(ws);
-    }
-    session.stateMachine.transition("reconnecting", "cli_ws_closed");
-
-    // Debounce: delay disconnect notification by 15s.
-    // CLI cycles its WebSocket every ~30s (close code 1000) and uses exponential
-    // backoff (1s → 2s → 4s → 8s → …) on reconnect. After rapid successive
-    // disconnects, the backoff can exceed 5s, so we use 15s to cover the worst
-    // case (8s backoff + connection overhead).
-    const existing = this.disconnectTimers.get(sessionId);
-    if (existing) clearTimeout(existing);
-    this.disconnectTimers.set(sessionId, setTimeout(() => {
-      this.disconnectTimers.delete(sessionId);
-      // Check if CLI reconnected during grace period
-      if (session.backendAdapter?.isConnected()) return;
-      log.warn("ws-bridge", "CLI disconnect confirmed", { sessionId });
-      session.stateMachine.transition("terminated", "disconnect_confirmed");
-      this.broadcastToBrowsers(session, { type: "cli_disconnected" });
-      for (const [reqId] of session.pendingPermissions) {
-        this.broadcastToBrowsers(session, { type: "permission_cancelled", request_id: reqId });
-        companionBus.emit("session:permission-cancelled", { sessionId, requestId: reqId });
-      }
-      session.pendingPermissions.clear();
-
-      // Request auto-relaunch regardless of browser state — the proactive
-      // keepalive in the orchestrator ensures headless sessions stay alive.
-      companionBus.emit("session:relaunch-needed", { sessionId });
-    }, WsBridge.DISCONNECT_DEBOUNCE_MS));
   }
 
   // ── Browser WebSocket handlers ──────────────────────────────────────────
@@ -1071,22 +933,23 @@ export class WsBridge {
   }
 
   /** Send an initialize control request with context appended to the system prompt.
-   *  Must be called before the first user message. Claude-specific: uses ClaudeAdapter
-   *  to send a raw control_request. If CLI isn't connected yet, the adapter queues it. */
+   *  Must be called before the first user message. Claude-specific: uses
+   *  sendRawNDJSON to send a raw control_request. If CLI isn't connected yet,
+   *  the adapter queues it. */
   injectSystemPrompt(sessionId: string, appendSystemPrompt: string): void {
     const session = this.sessions.get(sessionId);
     if (!session) {
       console.error(`[ws-bridge] Cannot inject system prompt: session ${sessionId} not found`);
       return;
     }
-    if (session.backendAdapter instanceof ClaudeAdapter) {
+    if (session.backendAdapter && "sendRawNDJSON" in session.backendAdapter) {
       const { randomUUID } = require("node:crypto") as typeof import("node:crypto");
       const ndjson = JSON.stringify({
         type: "control_request",
         request_id: randomUUID(),
         request: { subtype: "initialize", appendSystemPrompt },
       });
-      session.backendAdapter.sendRawNDJSON(ndjson);
+      (session.backendAdapter as { sendRawNDJSON: (s: string) => void }).sendRawNDJSON(ndjson);
     }
   }
 
@@ -1262,8 +1125,6 @@ export class WsBridge {
     }
 
     // Delegate to the backend adapter if connected; otherwise queue for later flush.
-    // For Claude: adapter may exist but WS is disconnected (CLI cycling). Queue at
-    // bridge level so handleCLIOpen flushes via adapter.send() after reconnect.
     if (session.backendAdapter?.isConnected()) {
       if (session.pendingMessages.length > 0) {
         this.flushQueuedBrowserMessages(session, session.backendAdapter, "backend_connected_send");
