@@ -62,7 +62,7 @@ class StdioTransport {
   private sessionId: string;
 
   constructor(
-    stdin: WritableStream<Uint8Array> | { write(data: Uint8Array): number },
+    stdin: WritableStream<Uint8Array> | { write(data: Uint8Array): number | Promise<number> },
     stdout: ReadableStream<Uint8Array>,
     opts: {
       sessionId: string;
@@ -79,7 +79,7 @@ class StdioTransport {
     if ("write" in stdin && typeof stdin.write === "function") {
       writable = new WritableStream({
         write(chunk) {
-          (stdin as { write(data: Uint8Array): number }).write(chunk);
+          (stdin as { write(data: Uint8Array): number | Promise<number> }).write(chunk);
         },
       });
     } else {
@@ -190,7 +190,7 @@ export class ClaudeAdapter implements IBackendAdapter {
    * starts reading stdout for NDJSON messages.
    */
   attachStdio(
-    stdin: WritableStream<Uint8Array> | { write(data: Uint8Array): number },
+    stdin: WritableStream<Uint8Array> | { write(data: Uint8Array): number | Promise<number> },
     stdout: ReadableStream<Uint8Array>,
   ): void {
     this.transport = new StdioTransport(stdin, stdout, {

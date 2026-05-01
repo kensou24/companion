@@ -87,8 +87,9 @@ function createMockProc(pid = 12345) {
     pid,
     kill: vi.fn(),
     exited: exitedPromise,
-    stdout: null,
-    stderr: null,
+    stdin: new WritableStream<Uint8Array>(),
+    stdout: new ReadableStream<Uint8Array>(),
+    stderr: new ReadableStream<Uint8Array>(),
   };
 }
 
@@ -169,16 +170,18 @@ afterEach(() => {
 // ─── launch ──────────────────────────────────────────────────────────────────
 
 describe("launch", () => {
-  it("creates a session with a UUID and starting state", () => {
+  it("creates a session with a UUID and connected state (stdio)", () => {
+    // With stdio transport, the session goes directly to "connected" because
+    // stdin/stdout are immediately available from the spawned process.
     const info = launcher.launch({ cwd: "/tmp/project" });
 
     expect(info.sessionId).toBe("test-session-id");
-    expect(info.state).toBe("starting");
+    expect(info.state).toBe("connected");
     expect(info.cwd).toBe("/tmp/project");
     expect(info.createdAt).toBeGreaterThan(0);
   });
 
-  it("spawns CLI with correct --sdk-url and flags", () => {
+  it("spawns CLI with correct flags and stdin pipe", () => {
     launcher.launch({ cwd: "/tmp/project" });
 
     expect(mockSpawn).toHaveBeenCalledOnce();
@@ -187,9 +190,7 @@ describe("launch", () => {
     // Binary should be resolved via execSync
     expect(cmdAndArgs[0]).toBe("/usr/bin/claude");
 
-    // Core required flags
-    expect(cmdAndArgs).toContain("--sdk-url");
-    expect(cmdAndArgs).toContain("ws://localhost:3456/ws/cli/test-session-id");
+    // Core required flags (no more --sdk-url with stdio transport)
     expect(cmdAndArgs).toContain("--print");
     expect(cmdAndArgs).toContain("--output-format");
     expect(cmdAndArgs).toContain("stream-json");
@@ -201,10 +202,23 @@ describe("launch", () => {
     expect(cmdAndArgs).toContain("-p");
     expect(cmdAndArgs).toContain("");
 
-    // Spawn options
+    // Spawn options — stdin must be piped for stdio transport
     expect(options.cwd).toBe("/tmp/project");
+    expect(options.stdin).toBe("pipe");
     expect(options.stdout).toBe("pipe");
     expect(options.stderr).toBe("pipe");
+  });
+
+  it("emits backend:claude-adapter-created bus event after spawn", () => {
+    // The launcher creates a ClaudeAdapter with stdio transport and emits
+    // a bus event so the WsBridge can attach it.
+    const onAdapter = vi.fn();
+    companionBus.on("backend:claude-adapter-created", ({ sessionId, adapter }) => onAdapter(sessionId, adapter));
+
+    launcher.launch({ cwd: "/tmp/project" });
+
+    expect(onAdapter).toHaveBeenCalledTimes(1);
+    expect(onAdapter.mock.calls[0][0]).toBe("test-session-id");
   });
 
   it("passes --model when provided", () => {
@@ -272,7 +286,7 @@ describe("launch", () => {
     }
   });
 
-  it("uses COMPANION_CONTAINER_SDK_HOST for containerized sdk-url when set", () => {
+  it("containerized session uses stdin pipe for stdio transport", () => {
     process.env.COMPANION_CONTAINER_SDK_HOST = "172.17.0.1";
     launcher.launch({
       cwd: "/tmp/project",
@@ -280,11 +294,13 @@ describe("launch", () => {
       containerName: "companion-test",
     });
 
-    const [cmdAndArgs] = mockSpawn.mock.calls[0];
+    const [cmdAndArgs, options] = mockSpawn.mock.calls[0];
     // With bash -lc wrapping, CLI args are in the last element as a single string
     const bashCmd = cmdAndArgs[cmdAndArgs.length - 1];
-    expect(bashCmd).toContain("--sdk-url");
-    expect(bashCmd).toContain("ws://172.17.0.1:3456/ws/cli/test-session-id");
+    // No more --sdk-url with stdio transport
+    expect(bashCmd).not.toContain("--sdk-url");
+    // stdin must be piped for stdio transport even in container mode
+    expect(options.stdin).toBe("pipe");
   });
 
   it("passes --allowedTools for each tool", () => {
@@ -730,11 +746,11 @@ describe("relaunch", () => {
     expect(cmdAndArgs).toContain("--resume");
     expect(cmdAndArgs).toContain("cli-resume-id");
 
-    // Session state should be reset to starting (set by relaunch before spawnCLI)
+    // Session state should be "connected" (stdio transport connects immediately)
     // Allow microtask queue to flush
     await new Promise((r) => setTimeout(r, 10));
     const session = launcher.getSession("test-session-id");
-    expect(session?.state).toBe("starting");
+    expect(session?.state).toBe("connected");
   });
 
   it("reuses launch env variables during relaunch", async () => {
@@ -1286,12 +1302,13 @@ describe("persistence", () => {
 // ─── getStartingSessions ─────────────────────────────────────────────────────
 
 describe("getStartingSessions", () => {
-  it("returns only sessions in starting state", () => {
+  it("returns empty list for stdio sessions (they connect immediately)", () => {
+    // With stdio transport, sessions go directly to "connected" state
+    // because stdin/stdout are available from spawn. There is no "starting" phase.
     launcher.launch({ cwd: "/tmp" });
 
     const starting = launcher.getStartingSessions();
-    expect(starting).toHaveLength(1);
-    expect(starting[0].state).toBe("starting");
+    expect(starting).toHaveLength(0);
   });
 
   it("excludes sessions that have been connected", () => {

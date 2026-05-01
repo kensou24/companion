@@ -646,7 +646,7 @@ describe("DELETE /skills/:slug", () => {
     expect(json).toEqual({ ok: true, slug: "doomed-skill" });
 
     // Verify rm was called with recursive and force flags on the directory (normalize path for cross-platform)
-    const rmCalls = mockRm.mock.calls;
+    const rmCalls = mockRm.mock.calls as any[];
     const matchedCall = rmCalls.find((c: any[]) => c[1]?.recursive === true && c[1]?.force === true);
     expect(matchedCall).toBeDefined();
     expect((matchedCall![0] as string).replace(/\\/g, "/")).toBe(`${SKILLS_DIR}/doomed-skill`);

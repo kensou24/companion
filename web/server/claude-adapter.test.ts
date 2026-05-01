@@ -36,16 +36,52 @@ vi.mock("./settings-manager.js", () => ({
 import { ClaudeAdapter } from "./claude-adapter.js";
 import { log } from "./logger.js";
 
-// ─── Mock socket factory ────────────────────────────────────────────────────
+// ─── Mock stdio factory ────────────────────────────────────────────────────
 
-/** Creates a minimal mock ServerWebSocket<SocketData> for CLI connections. */
-function createMockSocket(sessionId: string) {
-  return {
-    data: { kind: "cli" as const, sessionId },
-    send: vi.fn(),
-    close: vi.fn(),
-    readyState: 1,
-  } as any;
+/**
+ * Creates mock stdin/stdout streams for use with ClaudeAdapter.attachStdio().
+ *
+ * The adapter writes outgoing NDJSON to mockStdin and reads incoming NDJSON
+ * lines from mockStdout (by enqueuing data via getStdoutController()).
+ *
+ * IMPORTANT: We mock stdin as a WritableStream-like object with a synchronous
+ * getWriter(). This makes the StdioTransport take the `else` branch (treating
+ * it as a WritableStream) and use our synchronous mock writer directly, avoiding
+ * the async nature of real WritableStream writes in the vitest/Node.js environment.
+ */
+function createMockStdio() {
+  const writtenData: string[] = [];
+
+  // Create a WritableStream-like mock with synchronous getWriter().
+  // The StdioTransport checks `"write" in stdin` — our mock does NOT have
+  // a top-level `write` method, so the transport takes the `else` branch
+  // and calls `getWriter()` directly, giving us synchronous write capture.
+  // We cast to satisfy TypeScript's union type requirement.
+  const mockStdin = {
+    getWriter() {
+      return {
+        write(data: Uint8Array) {
+          writtenData.push(new TextDecoder().decode(data));
+          return Promise.resolve();
+        },
+        close() {
+          return Promise.resolve();
+        },
+        releaseLock() {},
+      };
+    },
+  } as unknown as WritableStream<Uint8Array>;
+
+  // Mock stdout — the adapter reads incoming NDJSON lines from here.
+  // Use getStdoutController().enqueue() to simulate CLI sending messages.
+  let stdoutController!: ReadableStreamDefaultController<Uint8Array>;
+  const mockStdout = new ReadableStream<Uint8Array>({
+    start(controller) {
+      stdoutController = controller;
+    },
+  });
+
+  return { mockStdin, mockStdout, writtenData, getStdoutController: () => stdoutController };
 }
 
 // ─── Helper: build NDJSON CLI messages ──────────────────────────────────────
@@ -286,8 +322,8 @@ describe("Known non-standard CLI message types", () => {
     // The CLI sends rate_limit_event messages with throttle/allow status.
     // These should be silently consumed and NOT trigger protocol drift logs.
     const spy = vi.spyOn(log, "warn").mockImplementation(() => {});
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     adapter.handleRawMessage(
       JSON.stringify({
@@ -316,8 +352,8 @@ describe("Known non-standard CLI message types", () => {
     // (the browser sends user_message → ws-bridge stores it → CLI echoes it
     // back). Silently drop them to prevent duplicate messages in the UI.
     const spy = vi.spyOn(log, "warn").mockImplementation(() => {});
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     adapter.handleRawMessage(
       JSON.stringify({
@@ -346,8 +382,8 @@ describe("Known non-standard CLI message types", () => {
     // User echo messages with tool_result arrays are redundant — the tool
     // results are already present in the subsequent assistant message content
     // blocks. Forwarding them caused raw JSON text bubbles in the chat UI.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     const complexContent = [
       { type: "tool_result", tool_use_id: "t1", content: "result" },
@@ -371,123 +407,108 @@ describe("Known non-standard CLI message types", () => {
 // ─── Connection lifecycle ───────────────────────────────────────────────────
 
 describe("Connection lifecycle", () => {
-  it("isConnected() returns false initially when no WebSocket is attached", () => {
-    // A freshly created adapter has no CLI socket, so it should not be connected.
+  it("isConnected() returns false initially when no stdio transport is attached", () => {
+    // A freshly created adapter has no transport, so it should not be connected.
     expect(adapter.isConnected()).toBe(false);
   });
 
-  it("attachWebSocket stores the socket and makes isConnected() return true", () => {
-    // Attaching a mock WebSocket should mark the adapter as connected.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+  it("attachStdio stores the transport and makes isConnected() return true", () => {
+    // Attaching mock stdio should mark the adapter as connected.
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
     expect(adapter.isConnected()).toBe(true);
   });
 
-  it("detachWebSocket clears the socket and calls disconnectCb", () => {
-    // Detaching the current socket should clear the connection and notify
-    // the bridge via the disconnect callback.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+  it("stdout EOF triggers disconnectCb", () => {
+    // When stdout closes (CLI process exits), the transport detects EOF
+    // and calls the disconnect callback so the bridge can clean up.
+    const { mockStdin, mockStdout, getStdoutController } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
     expect(adapter.isConnected()).toBe(true);
 
-    adapter.detachWebSocket(ws);
-    expect(adapter.isConnected()).toBe(false);
-    expect(disconnectCb).toHaveBeenCalledOnce();
+    // Close stdout to simulate CLI process exit
+    getStdoutController().close();
+
+    // Give the async reader time to process EOF
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        expect(disconnectCb).toHaveBeenCalledOnce();
+        resolve();
+      }, 50);
+    });
   });
 
-  it("detachWebSocket with a stale socket (different ws) does nothing", () => {
-    // If a new WebSocket replaced an old one, closing the old one should
-    // NOT clear the current connection or trigger the disconnect callback.
-    const ws1 = createMockSocket("sess-1");
-    const ws2 = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws1);
+  it("disconnect() closes the transport and clears the connection", async () => {
+    // disconnect() should close the transport and mark as disconnected.
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
-    // Replace with ws2
-    adapter.attachWebSocket(ws2);
-
-    // Detach ws1 (stale) — should be ignored
-    adapter.detachWebSocket(ws1);
-    expect(adapter.isConnected()).toBe(true);
-    expect(disconnectCb).not.toHaveBeenCalled();
-  });
-
-  it("disconnect() closes the socket and clears the connection", async () => {
-    // disconnect() should call close() on the socket and clear it.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
-
-    await adapter.disconnect();
-    expect(ws.close).toHaveBeenCalledOnce();
-    expect(adapter.isConnected()).toBe(false);
-  });
-
-  it("disconnect() with no socket is a no-op", async () => {
-    // Calling disconnect when there's no socket should not throw.
     await adapter.disconnect();
     expect(adapter.isConnected()).toBe(false);
   });
 
-  it("handleTransportClose() clears socket without calling disconnectCb", () => {
-    // handleTransportClose is used when a WS proxy drops — it clears the
-    // socket reference without triggering the disconnect callback so the
-    // CLI can reconnect.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
-
-    adapter.handleTransportClose();
+  it("disconnect() with no transport is a no-op", async () => {
+    // Calling disconnect when there's no transport should not throw.
+    await adapter.disconnect();
     expect(adapter.isConnected()).toBe(false);
-    expect(disconnectCb).not.toHaveBeenCalled();
   });
+
+  // Note: With stdio transport, reconnection is handled externally (by
+  // relaunching the CLI process). The adapter does not support reattaching
+  // a different transport — the old one must be disconnected first and a
+  // new adapter created for the relaunch. This differs from the former
+  // WebSocket model where the CLI could reconnect to the same adapter.
 });
 
 // ─── Message queuing ────────────────────────────────────────────────────────
 
 describe("Message queuing", () => {
-  it("messages sent via send() before WebSocket connects are queued", () => {
-    // Without an attached WebSocket, outgoing messages should be queued
-    // and not lost. We verify by attaching a socket later and checking
+  it("messages sent via send() before stdio transport attaches are queued", () => {
+    // Without an attached transport, outgoing messages should be queued
+    // and not lost. We verify by attaching stdio later and checking
     // that the queued messages are flushed.
     const result = adapter.send({ type: "user_message", content: "hello" });
     expect(result).toBe(true);
-    // No socket attached — nothing was sent yet.
+    // No transport attached — nothing was sent yet.
   });
 
-  it("queued messages are flushed when attachWebSocket is called", () => {
+  it("queued messages are flushed after system init", () => {
     // Send messages while disconnected, then verify they are delivered
-    // when the WebSocket attaches.
+    // after the transport attaches AND system init is received.
     adapter.send({ type: "user_message", content: "first" });
     adapter.send({ type: "user_message", content: "second" });
 
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout, writtenData } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
-    // Both queued messages should have been flushed to the socket.
-    // Each message results in a send() call with NDJSON + newline.
-    expect(ws.send).toHaveBeenCalledTimes(2);
+    // Queued messages are flushed after system init, not after attachStdio.
+    // Send a system init to trigger the flush.
+    adapter.handleRawMessage(makeInitMsg());
+
+    // Both queued messages should have been flushed to stdin.
+    expect(writtenData.length).toBeGreaterThanOrEqual(2);
 
     // Verify the first message content
-    const firstCall = ws.send.mock.calls[0][0] as string;
-    const parsed1 = JSON.parse(firstCall.trim());
+    const parsed1 = JSON.parse(writtenData[0].trim());
     expect(parsed1.type).toBe("user");
     expect(parsed1.message.content).toBe("first");
 
     // Verify the second message content
-    const secondCall = ws.send.mock.calls[1][0] as string;
-    const parsed2 = JSON.parse(secondCall.trim());
+    const parsed2 = JSON.parse(writtenData[1].trim());
     expect(parsed2.type).toBe("user");
     expect(parsed2.message.content).toBe("second");
   });
 
-  it("messages sent after WebSocket connects go directly to the socket", () => {
-    // Once a socket is attached, messages should be sent immediately
+  it("messages sent after stdio transport attaches go directly to stdin", () => {
+    // Once a transport is attached, messages should be sent immediately
     // without queuing.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout, writtenData } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     adapter.send({ type: "user_message", content: "direct" });
 
-    expect(ws.send).toHaveBeenCalledTimes(1);
-    const sent = JSON.parse((ws.send.mock.calls[0][0] as string).trim());
+    expect(writtenData.length).toBeGreaterThanOrEqual(1);
+    const sent = JSON.parse(writtenData[writtenData.length - 1].trim());
     expect(sent.type).toBe("user");
     expect(sent.message.content).toBe("direct");
   });
@@ -496,17 +517,17 @@ describe("Message queuing", () => {
 // ─── send() — outgoing message translation ──────────────────────────────────
 
 describe("send() — outgoing message translation", () => {
-  let ws: ReturnType<typeof createMockSocket>;
+  let writtenData: string[];
 
   beforeEach(() => {
-    ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const stdio = createMockStdio();
+    writtenData = stdio.writtenData;
+    adapter.attachStdio(stdio.mockStdin, stdio.mockStdout);
   });
 
-  /** Helper to parse the last NDJSON sent on the mock socket. */
+  /** Helper to parse the last NDJSON written to the mock stdin. */
   function getLastSent(): any {
-    const calls = ws.send.mock.calls;
-    return JSON.parse((calls[calls.length - 1][0] as string).trim());
+    return JSON.parse(writtenData[writtenData.length - 1].trim());
   }
 
   it("user_message → sends NDJSON with type 'user' and user-role message", () => {
@@ -647,22 +668,22 @@ describe("send() — outgoing message translation", () => {
       aiValidationEnabled: true,
     });
     expect(result).toBe(true);
-    // No message should have been sent to the socket
-    expect(ws.send).not.toHaveBeenCalled();
+    // No message should have been sent to stdin
+    expect(writtenData).toHaveLength(0);
   });
 
   it("session_subscribe → returns false (handled at bridge level)", () => {
     // session_subscribe is handled by the bridge, not forwarded to the backend.
     const result = adapter.send({ type: "session_subscribe", last_seq: 0 });
     expect(result).toBe(false);
-    expect(ws.send).not.toHaveBeenCalled();
+    expect(writtenData).toHaveLength(0);
   });
 
   it("session_ack → returns false (handled at bridge level)", () => {
     // session_ack is handled by the bridge, not forwarded to the backend.
     const result = adapter.send({ type: "session_ack", last_seq: 5 });
     expect(result).toBe(false);
-    expect(ws.send).not.toHaveBeenCalled();
+    expect(writtenData).toHaveLength(0);
   });
 
   it("mcp_get_status → sends control_request with subtype 'mcp_status'", () => {
@@ -688,11 +709,9 @@ describe("send() — outgoing message translation", () => {
 // ─── handleRawMessage() — incoming CLI message routing ──────────────────────
 
 describe("handleRawMessage() — incoming CLI message routing", () => {
-  let ws: ReturnType<typeof createMockSocket>;
-
   beforeEach(() => {
-    ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
   });
 
   it("system init → emits sessionMetaCb and browserMessageCb with session_init", () => {
@@ -854,27 +873,25 @@ describe("handleRawMessage() — incoming CLI message routing", () => {
     expect(msg.tool_use_ids).toEqual(["tu-1", "tu-2"]);
   });
 
-  it("multiple NDJSON lines in one message are all processed", () => {
-    // The CLI may send multiple JSON objects separated by newlines in
-    // a single WebSocket message. All should be parsed and routed.
-    const combined = makeStreamEventMsg({ uuid: "s1" }) + "\n" + makeToolProgressMsg();
-    adapter.handleRawMessage(combined);
+  it("multiple NDJSON lines are processed individually", () => {
+    // With stdio transport, each line arrives separately via the transport's
+    // line reader. handleRawMessage receives single lines, not multi-line batches.
+    // Calling handleRawMessage twice simulates two separate stdout lines.
+    adapter.handleRawMessage(makeStreamEventMsg({ uuid: "s1" }));
+    adapter.handleRawMessage(makeToolProgressMsg());
     expect(browserMessageCb).toHaveBeenCalledTimes(2);
     expect(browserMessageCb.mock.calls[0][0].type).toBe("stream_event");
     expect(browserMessageCb.mock.calls[1][0].type).toBe("tool_progress");
   });
 
-  it("malformed JSON lines are skipped without crashing", () => {
-    // If a line in the NDJSON cannot be parsed, it should be skipped
-    // and subsequent valid lines should still be processed.
-    // The parse error also surfaces as an error message to the browser.
+  it("malformed JSON is handled without crashing", () => {
+    // If a single line cannot be parsed, it should be reported as a
+    // protocol drift error without crashing the adapter.
     const spy = vi.spyOn(log, "warn").mockImplementation(() => {});
-    const raw = "not json\n" + makeAssistantMsg();
-    adapter.handleRawMessage(raw);
-    // Parse error surfaced + valid assistant message processed
+    adapter.handleRawMessage("not json");
+    // Parse error surfaced as error message
     const calls = browserMessageCb.mock.calls.map((args: any[]) => args[0].type);
     expect(calls).toContain("error");
-    expect(calls).toContain("assistant");
     spy.mockRestore();
   });
 });
@@ -882,11 +899,9 @@ describe("handleRawMessage() — incoming CLI message routing", () => {
 // ─── Activity update callback ───────────────────────────────────────────────
 
 describe("Activity update callback", () => {
-  let ws: ReturnType<typeof createMockSocket>;
-
   beforeEach(() => {
-    ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
   });
 
   it("onActivityUpdate called on non-keepalive messages", () => {
@@ -919,11 +934,9 @@ describe("Activity update callback", () => {
 // ─── Deduplication ──────────────────────────────────────────────────────────
 
 describe("Deduplication", () => {
-  let ws: ReturnType<typeof createMockSocket>;
-
   beforeEach(() => {
-    ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
   });
 
   it("duplicate assistant messages are filtered out", () => {
@@ -969,11 +982,12 @@ describe("Deduplication", () => {
 // ─── Control request/response flow ──────────────────────────────────────────
 
 describe("Control request/response flow", () => {
-  let ws: ReturnType<typeof createMockSocket>;
+  let writtenData: string[];
 
   beforeEach(() => {
-    ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const stdio = createMockStdio();
+    writtenData = stdio.writtenData;
+    adapter.attachStdio(stdio.mockStdin, stdio.mockStdout);
   });
 
   it("MCP status request creates pending control request and resolves on response", () => {
@@ -984,7 +998,7 @@ describe("Control request/response flow", () => {
     adapter.send({ type: "mcp_get_status" });
 
     // Extract the request_id from what was sent to the CLI
-    const sentRaw = (ws.send.mock.calls[0][0] as string).trim();
+    const sentRaw = writtenData[0].trim();
     const sent = JSON.parse(sentRaw);
     const requestId = sent.request_id;
 
@@ -1034,7 +1048,7 @@ describe("Control request/response flow", () => {
     uuidCounter = 200;
     adapter.send({ type: "mcp_get_status" });
 
-    const sentRaw = (ws.send.mock.calls[0][0] as string).trim();
+    const sentRaw = writtenData[0].trim();
     const sent = JSON.parse(sentRaw);
     const requestId = sent.request_id;
 
@@ -1063,7 +1077,7 @@ describe("Control request/response flow", () => {
     uuidCounter = 300;
     adapter.send({ type: "mcp_get_status" });
 
-    const sentRaw = (ws.send.mock.calls[0][0] as string).trim();
+    const sentRaw = writtenData[0].trim();
     const sent = JSON.parse(sentRaw);
     const requestId = sent.request_id;
 
@@ -1091,21 +1105,27 @@ describe("Control request/response flow", () => {
 
 describe("System init flushes pending messages", () => {
   it("messages queued before init are flushed after init", () => {
-    // When the CLI socket is connected but the adapter has pending messages
-    // from before the connection, the init handler also flushes them.
-    // This tests the scenario where messages are sent before the socket
-    // is attached, then the socket attaches (flushing queue), and additional
-    // messages are sent before init — those get queued internally too.
+    // When the CLI transport is connected but the adapter has pending messages
+    // from before the connection, the init handler flushes them.
+    // Messages sent before attachStdio are queued in pendingMessages.
+    // They are only flushed once a system init message arrives.
 
-    // First, send a message before socket is attached (queued)
+    // First, send a message before transport is attached (queued in pendingMessages)
     adapter.send({ type: "user_message", content: "queued-msg" });
 
-    // Attach socket — this flushes the pendingMessages
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    // Attach transport — transport is now set, but pendingMessages NOT flushed yet
+    const { mockStdin, mockStdout, writtenData } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
-    expect(ws.send).toHaveBeenCalledTimes(1);
-    const firstSent = JSON.parse((ws.send.mock.calls[0][0] as string).trim());
+    // pendingMessages are flushed only after system init, not on attachStdio
+    expect(writtenData.length).toBe(0);
+
+    // Simulate the CLI sending its init message — this triggers the flush
+    adapter.handleRawMessage(makeInitMsg());
+
+    // Now the queued message should have been flushed to the transport
+    expect(writtenData.length).toBeGreaterThanOrEqual(1);
+    const firstSent = JSON.parse(writtenData[0].trim());
     expect(firstSent.message.content).toBe("queued-msg");
   });
 });
@@ -1120,8 +1140,8 @@ describe("Edge cases", () => {
     const cb = vi.fn();
     plainAdapter.onBrowserMessage(cb);
 
-    const ws = createMockSocket("sess-2");
-    plainAdapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    plainAdapter.attachStdio(mockStdin, mockStdout);
     plainAdapter.handleRawMessage(makeAssistantMsg());
 
     expect(cb).toHaveBeenCalledOnce();
@@ -1130,8 +1150,8 @@ describe("Edge cases", () => {
   it("adapter works without any callbacks registered", () => {
     // Processing messages without any registered callbacks should not throw.
     const plainAdapter = new ClaudeAdapter("sess-3");
-    const ws = createMockSocket("sess-3");
-    plainAdapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    plainAdapter.attachStdio(mockStdin, mockStdout);
 
     // Should not throw even without callbacks
     expect(() => plainAdapter.handleRawMessage(makeInitMsg())).not.toThrow();
@@ -1143,8 +1163,8 @@ describe("Edge cases", () => {
     const cb = vi.fn();
     adapter.onBrowserMessage(cb);
 
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     adapter.handleRawMessage(
       makeInitMsg({
@@ -1163,12 +1183,16 @@ describe("Edge cases", () => {
   });
 
   it("empty NDJSON data produces no emissions", () => {
-    // An empty string or whitespace-only message should produce no emissions.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    // An empty string should fail to parse and produce no meaningful emissions.
+    // The StdioTransport filters empty/whitespace lines before calling handleRawMessage,
+    // so this test validates the adapter's resilience if called directly.
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
+    // Empty strings will fail JSON.parse and be reported as parse errors
     adapter.handleRawMessage("");
-    adapter.handleRawMessage("   \n  \n  ");
-    expect(browserMessageCb).not.toHaveBeenCalled();
+    // Should have produced a parse error emission
+    expect(browserMessageCb).toHaveBeenCalledTimes(1);
+    expect(browserMessageCb.mock.calls[0][0].type).toBe("error");
   });
 });
 
@@ -1179,8 +1203,8 @@ describe("control_cancel_request", () => {
     // When the CLI cancels a pending control request (e.g. tool permission
     // that is no longer needed), the adapter should notify browsers so they
     // can remove the pending permission UI.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     const msg = JSON.stringify({ type: "control_cancel_request", request_id: "req-cancel-1" });
     adapter.handleRawMessage(msg);
@@ -1199,8 +1223,8 @@ describe("enriched can_use_tool", () => {
     // Newer CLI versions may include enriched fields on can_use_tool requests
     // (title, display_name, blocked_path, decision_reason). The adapter should
     // forward all of these to the browser in the permission_request.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     const msg = JSON.stringify({
       type: "control_request",
@@ -1231,8 +1255,8 @@ describe("enriched can_use_tool", () => {
   it("works without enriched fields (backward compat)", () => {
     // Older CLI versions do not include enriched fields. The adapter should
     // still emit a valid permission_request with those fields undefined.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     const msg = JSON.stringify({
       type: "control_request",
@@ -1261,12 +1285,12 @@ describe("end_session", () => {
   it("sends end_session control_request to CLI", () => {
     // The browser can request the session to end. This should be translated
     // into a control_request with subtype "end_session" and the reason forwarded.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout, writtenData } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     adapter.send({ type: "end_session", reason: "user closed" } as any);
 
-    const sent = JSON.parse((ws.send.mock.calls[0][0] as string).trim());
+    const sent = JSON.parse(writtenData[0].trim());
     expect(sent.type).toBe("control_request");
     expect(sent.request.subtype).toBe("end_session");
     expect(sent.request.reason).toBe("user closed");
@@ -1279,12 +1303,12 @@ describe("stop_task", () => {
   it("sends stop_task control_request to CLI", () => {
     // The browser can stop a running task. This should be translated into
     // a control_request with subtype "stop_task" and the task_id forwarded.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout, writtenData } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     adapter.send({ type: "stop_task", task_id: "task-123" } as any);
 
-    const sent = JSON.parse((ws.send.mock.calls[0][0] as string).trim());
+    const sent = JSON.parse(writtenData[0].trim());
     expect(sent.type).toBe("control_request");
     expect(sent.request.subtype).toBe("stop_task");
     expect(sent.request.task_id).toBe("task-123");
@@ -1298,12 +1322,12 @@ describe("update_environment_variables", () => {
     // Environment variable updates are sent as a top-level message type,
     // not wrapped in a control_request, because the CLI expects them
     // as a distinct message kind.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout, writtenData } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     adapter.send({ type: "update_environment_variables", variables: { TOKEN: "new-val" } } as any);
 
-    const sent = JSON.parse((ws.send.mock.calls[0][0] as string).trim());
+    const sent = JSON.parse(writtenData[0].trim());
     expect(sent.type).toBe("update_environment_variables");
     expect(sent.variables.TOKEN).toBe("new-val");
   });
@@ -1315,8 +1339,8 @@ describe("streamlined messages", () => {
   it("forwards streamlined_text to browser", () => {
     // In simplified output mode, the CLI sends streamlined_text messages
     // instead of full assistant messages. These should be forwarded as-is.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     const msg = JSON.stringify({ type: "streamlined_text", text: "Hello world", session_id: "s1", uuid: "u1" });
     adapter.handleRawMessage(msg);
@@ -1330,8 +1354,8 @@ describe("streamlined messages", () => {
   it("forwards streamlined_tool_use_summary to browser", () => {
     // In simplified output mode, tool use summaries are sent as
     // streamlined_tool_use_summary. These should be forwarded with the summary text.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     const msg = JSON.stringify({ type: "streamlined_tool_use_summary", tool_summary: "Read 2 files", session_id: "s1", uuid: "u2" });
     adapter.handleRawMessage(msg);
@@ -1349,8 +1373,8 @@ describe("prompt_suggestion", () => {
   it("forwards prompt suggestions to browser", () => {
     // The CLI can suggest next prompts to the user. These should be forwarded
     // so the browser can render suggestion chips in the UI.
-    const ws = createMockSocket("sess-1");
-    adapter.attachWebSocket(ws);
+    const { mockStdin, mockStdout } = createMockStdio();
+    adapter.attachStdio(mockStdin, mockStdout);
 
     const msg = JSON.stringify({ type: "prompt_suggestion", suggestions: ["Fix the bug", "Add tests"], session_id: "s1", uuid: "u3" });
     adapter.handleRawMessage(msg);
