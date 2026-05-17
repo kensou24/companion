@@ -118,6 +118,16 @@ Control your sessions directly from WeChat — no browser needed.
 
 See [`docs/wechat-bot.md`](docs/wechat-bot.md) for full documentation.
 
+### Feishu / Lark Bot
+
+Control your sessions from Feishu (飞书) or Lark — supports DM and group @bot interactions.
+
+**Setup:** Navigate to **Integrations → Feishu Bot** (or `#/integrations/feishu`), enter your App ID and App Secret from the [Feishu Open Platform](https://open.feishu.cn), then click **Start**.
+
+The bot uses WebSocket long connection — no public IP or webhook URL needed. It supports the same commands as the WeChat bot: `/new`, `/sessions`, `/switch`, `/kill`, `/model`, `/mode`, `/allow`, `/deny`, `/status`, `/help`, and more.
+
+See [`docs/feishu-bot.md`](docs/feishu-bot.md) for full documentation.
+
 ---
 
 ## Architecture
@@ -126,11 +136,11 @@ See [`docs/wechat-bot.md`](docs/wechat-bot.md) for full documentation.
 Browser (React)
   ↔ ws://localhost:3456/ws/browser/:session
 Companion server (Bun + Hono)
-  ↔ ws://localhost:3456/ws/cli/:session
-Claude Code / Codex CLI
+  ↔ stdio (NDJSON) for Claude Code / JSON-RPC for Codex
+CLI subprocess
 ```
 
-The bridge uses the CLI `--sdk-url` websocket path and NDJSON events. See [`WEBSOCKET_PROTOCOL_REVERSED.md`](WEBSOCKET_PROTOCOL_REVERSED.md) for protocol details.
+The server spawns Claude Code CLI as a subprocess and communicates via stdin/stdout using the same NDJSON protocol documented in [`WEBSOCKET_PROTOCOL_REVERSED.md`](WEBSOCKET_PROTOCOL_REVERSED.md). Codex uses JSON-RPC 2.0 over stdio — see [`web/CODEX_MAPPING.md`](web/CODEX_MAPPING.md) for the protocol mapping.
 
 ---
 

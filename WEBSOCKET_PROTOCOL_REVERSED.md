@@ -1,9 +1,11 @@
-# Claude Code WebSocket SDK Protocol — Reverse Engineered
+# Claude Code SDK Protocol — Reverse Engineered
 
+> **Note:** The Companion now communicates with Claude Code via **stdio** (stdin/stdout pipes) instead of WebSocket. The NDJSON message format documented here is identical regardless of transport — this doc remains the authoritative reference for the wire protocol.
+>
 > **Reverse-engineered from Claude Code CLI v2.1.37 (`cli.js`) and Agent SDK v0.2.37 (`sdk.mjs`, `sdk.d.ts`)**
 > **Updated with v2.1.81 discoveries (channels system, new message types, enriched fields)**
 >
-> This document describes the undocumented WebSocket protocol that Claude Code CLI uses for programmatic control via the `--sdk-url` flag. This is the same NDJSON protocol used over stdin/stdout, but transported over WebSocket — enabling full bidirectional control without tmux or PTY hacks.
+> This document describes the NDJSON protocol that Claude Code CLI uses for programmatic control. The same protocol is used over both WebSocket (`--sdk-url` flag) and stdin/stdout (`--print` mode).
 
 ---
 

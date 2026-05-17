@@ -1,10 +1,8 @@
 # WeChat Bot 集成教程
 
-通过 WeChat Bot，你可以直接在微信中控制 Claude Code / Codex 会话，，无需打开浏览器。
+通过 WeChat Bot，你可以直接在微信中控制 Claude Code / Codex 会话，无需打开浏览器。
 
-即可随时随地通过微信发送消息、创建会话、管理会权限、切换模型。
-
-以及批准或拒绝工具操作。
+即可随时随地通过微信发送消息、创建会话、管理权限、切换模型，以及批准或拒绝工具操作。
 
 ---
 
@@ -12,7 +10,7 @@
 
 ### 1. 进入设置页面
 
-打开 Companion Web UI，导航到 **Integrations** 页面，点击 **WeChat Bot** 卡片的齿轮图标，或或直接访问 `#/integrations/wechat`。
+打开 Companion Web UI，导航到 **Integrations** 页面，点击 **WeChat Bot** 卡片的齿轮图标，或直接访问 `#/integrations/wechat`。
 
 ### 2. 启动 Bot
 
@@ -21,7 +19,7 @@
 2. 用微信扫描二维码并确认登录
 3. 登录成功后状态自动变为 **Running**
 
-> 频道提示： Bot 凭据会 `~/.companion/wechat-bot/` 目录持久化，首次登录后无需再次扫码。
+> 频道提示：Bot 凭据会持久化在 `~/.companion/wechat-bot/` 目录，首次登录后无需再次扫码。
 
 ### 3. 配置选项
 
@@ -30,13 +28,13 @@
 | **Enable WeChat Bot** | 服务器启动时自动启动 Bot | 关 |
 | **Auto-approve safe tools** | 自动批准 Read、 Glob、 Grep 等只读操作 | 开启 |
 | **Forward dangerous permissions** | Bash (rm)、 Write、 Edit 瓍转发微信等待批准 | 开启 |
-| **Allowed Users** | 微信用户 ID 白名单，逗号分隔），留空允许所有人） | 空 |
+| **Allowed Users** | 微信用户 ID 白名单（逗号分隔），留空允许所有人 | 空 |
 | **Default Permission Mode** | 新建会话的权限模式 | `acceptEdits` |
 | **Default Working Directory** | /new 和 /dir 命令的基础目录 | 空 |
 
 ### 4. 服务器自动启动
 
-勾选 **Enable WeChat Bot** 后，每次服务器重启启会自动启动 Bot，无需手动操作。
+勾选 **Enable WeChat Bot** 后，每次服务器重启会自动启动 Bot，无需手动操作。
 
 ---
 
@@ -159,7 +157,7 @@ Bot 会自动尝试恢复登录。如果凭据失效，需要重新扫码：停�
 ### Q: 消息没有回复？
 
 1. 发送 `/status` 检查会话状态
-2. 发送 `/sessions` 知道是否有会话
+2. 发送 `/sessions` 查看是否有会话
 3. 如果没有会话，发送 `/new` 创建一个
 
 ### Q: 如何查看微信用户 ID？
