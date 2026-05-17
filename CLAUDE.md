@@ -4,13 +4,13 @@ This file provides guidance to Claude Code & Codex when working with code in thi
 
 ## What This Is
 
-The Companion — a web UI for Claude Code & Codex. 
-It reverse-engineers the undocumented `--sdk-url` WebSocket protocol in the Claude Code CLI to provide a browser-based interface for running multiple Claude Code sessions with streaming, tool call visibility, and permission control.
+The Companion — a web UI for Claude Code & Codex.
+It communicates with Claude Code via stdio (NDJSON over stdin/stdout) and Codex via JSON-RPC to provide a browser-based interface for running multiple agent sessions with streaming, tool call visibility, and permission control.
 
 ## Development Commands
 
 ```bash
-# Dev server (Hono backend on :3456 + Vite HMR on :5174)
+# Dev server (Hono backend on :3457 + Vite HMR on :5174)
 cd web && bun install && bun run dev
 
 # Or from repo root
@@ -64,46 +64,62 @@ All UI components used in the message/chat flow **must** be represented in the P
 ### Data Flow
 
 ```
-Browser (React) ←→ WebSocket ←→ Hono Server (Bun) ←→ WebSocket (NDJSON) ←→ Claude Code CLI
-     :5174              /ws/browser/:id        :3456        /ws/cli/:id         (--sdk-url)
+Browser (React) ←→ WebSocket ←→ Hono Server (Bun) ←→ stdio (NDJSON) ←→ Claude Code CLI
+     :5174              /ws/browser/:id        :3457        stdin/stdout
+
+Browser (React) ←→ WebSocket ←→ Hono Server (Bun) ←→ stdio (JSON-RPC) ←→ Codex CLI (app-server)
+     :5174              /ws/browser/:id        :3457        stdin/stdout
 ```
 
 1. Browser sends a "create session" REST call to the server
-2. Server spawns `claude --sdk-url ws://localhost:3456/ws/cli/SESSION_ID` as a subprocess
-3. CLI connects back to the server over WebSocket using NDJSON protocol
-4. Server bridges messages between CLI WebSocket and browser WebSocket
+2. Server spawns Claude Code CLI as a subprocess with `--print --output-format stream-json --input-format stream-json` and communicates via stdin/stdout pipes (NDJSON)
+3. For Codex, server spawns `codex app-server` and communicates via stdin/stdout (JSON-RPC 2.0)
+4. Server bridges messages between the backend adapter (stdio) and browser WebSocket
 5. Tool calls arrive as `control_request` (subtype `can_use_tool`) — browser renders approval UI, server relays `control_response` back
 
 ### All code lives under `web/`
 
-- **`web/server/`** — Hono + Bun backend (runs on port 3456)
-  - `index.ts` — Server bootstrap, Bun.serve with dual WebSocket upgrade (CLI vs browser)
-  - `ws-bridge.ts` — Core message router. Maintains per-session state (CLI socket, browser sockets, message history, pending permissions). Parses NDJSON from CLI, translates to typed JSON for browsers.
-  - `cli-launcher.ts` — Spawns/kills/relaunches Claude Code CLI processes. Handles `--resume` for session recovery. Persists session state across server restarts.
+- **`web/server/`** — Hono + Bun backend (port 3457 in dev, 3456 in production)
+  - `index.ts` — Server bootstrap, Bun.serve with WebSocket upgrade for browser connections
+  - `backend-adapter.ts` — `IBackendAdapter` interface shared by Claude and Codex adapters
+  - `claude-adapter.ts` — Claude Code adapter: stdio transport (NDJSON over stdin/stdout), message parsing, control protocol
+  - `codex-adapter.ts` — Codex adapter: JSON-RPC 2.0 transport (stdio or WebSocket), message translation to browser format
+  - `ws-bridge.ts` — Core message router. Manages browser WebSocket connections and bridges to backend adapters. Split into helper modules: `ws-bridge-browser-ingest.ts`, `ws-bridge-cli-ingest.ts`, `ws-bridge-codex.ts`, `ws-bridge-controls.ts`, `ws-bridge-persist.ts`, `ws-bridge-publish.ts`, `ws-bridge-replay.ts`, `ws-bridge-types.ts`
+  - `cli-launcher.ts` — Spawns/kills/relaunches Claude Code CLI and Codex processes. Handles `--resume` for session recovery. Persists session state across server restarts.
   - `session-store.ts` — JSON file persistence to `$TMPDIR/vibe-sessions/`. Debounced writes.
-  - `session-types.ts` — All TypeScript types for CLI messages (NDJSON), browser messages, session state, permissions.
-  - `routes.ts` — REST API: session CRUD, filesystem browsing, environment management.
+  - `session-types.ts` — All TypeScript types for CLI messages (NDJSON), Codex messages (JSON-RPC), browser messages, session state, permissions.
+  - `constants.ts` — Shared port and container constants (`DEFAULT_PORT_DEV=3457`, `DEFAULT_PORT_PROD=3456`)
+  - `routes.ts` — REST API entry point. Modularized into `routes/` subdirectory with route modules for: sessions, agents, cron, env, feishu, filesystem, git, linear, metrics, prompts, sandbox, settings, skills, system, tailscale, wechat
   - `env-manager.ts` — CRUD for environment profiles stored in `~/.companion/envs/`.
+  - `recorder.ts` — Raw protocol recording to JSONL files
+  - `replay.ts` — Load & filter utilities for recordings
+  - **`web/server/wechat/`** — WeChat bot integration (bridge, formatter, session manager, command handler, relay, send queue)
+  - **`web/server/feishu/`** — Feishu/Lark bot integration (bridge, relay, session manager, command handler, send queue, types)
 
 - **`web/src/`** — React 19 frontend
-  - `store.ts` — Zustand store. All state keyed by session ID (messages, streaming text, permissions, tasks, connection status).
+  - `store/` — Zustand store split into slices: `auth-slice`, `chat-slice`, `permissions-slice`, `sessions-slice`, `tasks-slice`, `terminal-slice`, `ui-slice`, `updates-slice`. `store.ts` re-exports from this directory.
   - `ws.ts` — Browser WebSocket client. Connects per-session, handles all incoming message types, auto-reconnects. Extracts task items from `TaskCreate`/`TaskUpdate`/`TodoWrite` tool calls.
   - `types.ts` — Re-exports server types + client-only types (`ChatMessage`, `TaskItem`, `SdkSessionInfo`).
   - `api.ts` — REST client for session management.
   - `App.tsx` — Root layout with sidebar, chat view, task panel. Hash routing (`#/playground`).
-  - `components/` — UI: `ChatView`, `MessageFeed`, `MessageBubble`, `ToolBlock`, `Composer`, `Sidebar`, `TopBar`, `HomePage`, `TaskPanel`, `PermissionBanner`, `EnvManager`, `Playground`.
+  - `utils/` — Utility modules: `backends`, `clipboard`, `format`, `image`, `names`, `notification-sound`, `project-grouping`, `recent-dirs`, `routing`, `time-ago`, `use-click-outside`, `use-mention-menu`
+  - `components/` — UI components (60+). Key components include: `ChatView`, `MessageFeed`, `MessageBubble`, `ToolBlock`, `Composer`, `Sidebar`, `TopBar`, `HomePage`, `TaskPanel`, `PermissionBanner`, `EnvManager`, `Playground`, `IntegrationsPage`, `LoginPage`, `AgentsPage`, `FeishuSettingsPage`, `WeChatSettingsPage`, `TerminalPage`, `LinearSettingsPage`, `TailscalePage`, `CronManager`, `SandboxManager`, `DiffViewer`, `ModelSwitcher`, `OnboardingModal`, `UpdateBanner`.
 
-- **`web/bin/cli.ts`** — CLI entry point (`bunx the-companion`). Sets `__COMPANION_PACKAGE_ROOT` and imports the server.
+- **`web/bin/cli.ts`** — CLI entry point (`bunx the-companion` or `the-companion`). Supports subcommands: `serve`, `start`, `install`, `stop`, `restart`, `uninstall`, `status`, `logs`, `sessions`, `envs`, `cron`, `skills`, `settings`, `assistant`.
 
-### WebSocket Protocol
+### NDJSON Protocol (Claude Code)
 
-The CLI uses NDJSON (newline-delimited JSON). Key message types from CLI: `system` (init/status), `assistant`, `result`, `stream_event`, `control_request`, `tool_progress`, `tool_use_summary`, `keep_alive`. Messages to CLI: `user`, `control_response`, `control_request` (for interrupt/set_model/set_permission_mode).
+Claude Code CLI communicates via NDJSON over stdin/stdout. Key message types from CLI: `system` (init/status), `assistant`, `result`, `stream_event`, `control_request`, `tool_progress`, `tool_use_summary`, `keep_alive`. Messages to CLI: `user`, `control_response`, `control_request` (for interrupt/set_model/set_permission_mode).
 
-Full protocol documentation is in `WEBSOCKET_PROTOCOL_REVERSED.md`.
+Full protocol documentation is in `WEBSOCKET_PROTOCOL_REVERSED.md` (the message format is the same NDJSON protocol regardless of transport — the doc was originally written for the WebSocket transport but the wire format is identical over stdio).
+
+### Codex Protocol
+
+Codex uses JSON-RPC 2.0 over stdin/stdout. The `codex-adapter.ts` translates between Codex's protocol and the browser message format. See `web/CODEX_MAPPING.md` for the full protocol mapping.
 
 ### Session Lifecycle
 
-Sessions persist to disk (`$TMPDIR/vibe-sessions/`) and survive server restarts. On restart, live CLI processes are detected by PID and given a grace period to reconnect their WebSocket. If they don't, they're killed and relaunched with `--resume` using the CLI's internal session ID.
+Sessions persist to disk (`$TMPDIR/vibe-sessions/`) and survive server restarts. On restart, live CLI processes are detected by PID and given a grace period to reconnect via stdio. If they don't, they're killed and relaunched with `--resume` using the CLI's internal session ID.
 
 ### Raw Protocol Recordings
 
@@ -192,16 +208,12 @@ gh pr edit --body-file /tmp/pr_body.md
 - All features must be compatible with both Codex and Claude Code. If a feature is only compatible with one, it must be gated behind a clear UI affordance (e.g. "This feature requires Claude Code") and the incompatible option should be hidden or disabled.
 - When implementing a new feature, always consider how it will work with both models and test with both if possible. If a feature is only implemented for one model, document that clearly in the code and in the UI.
 
-## Cursor Cloud specific instructions
+## Dev Environment Notes
 
-### Services
 - **Hono backend** (port 3457 in dev): `cd web && bun run dev:api` or via `./scripts/dev-start.sh`
 - **Vite frontend** (port 5174 in dev): `cd web && bun run dev:vite` or via `./scripts/dev-start.sh`
 - Both start together with `cd web && bun run dev` (or `make dev`), but that runs in foreground. Use `./scripts/dev-start.sh` for background mode.
-
-### Caveats
-- `./scripts/dev-start.sh` health-checks the backend on `/` which returns 404. If the script times out, the backend is still running — verify with `curl http://localhost:3457/api/sessions`. You can start the servers manually as background processes instead.
+- `./scripts/dev-start.sh` health-checks the backend on `/` which returns 404. If the script times out, the backend is still running — verify with `curl http://localhost:3457/api/sessions`.
 - The app requires Claude Code CLI or Codex CLI to create functional sessions. Without them, the UI loads but session creation will fail. The component playground at `#/playground` works without any CLI.
 - No external databases or services are needed. Session state persists to `$TMPDIR/vibe-sessions/` as JSON files.
 - The pre-commit hook (`.husky/pre-commit`) runs `cd web && bun run typecheck && bun run test -- --coverage`. Run these before committing.
-- Two blocked postinstalls (`core-js`, `protobufjs`) are harmless and do not affect functionality.

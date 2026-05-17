@@ -15,10 +15,10 @@ The Codex adapter communicates with the `codex app-server` binary via stdin/stdo
 
 | | Claude Code | Codex |
 |---|---|---|
-| Transport | WebSocket (CLI connects back via `--sdk-url`) | stdio (server spawns `codex app-server`) |
+| Transport | stdio (server spawns CLI with `--print`) | stdio (server spawns `codex app-server`) |
 | Protocol | NDJSON (newline-delimited JSON) | JSON-RPC 2.0 (newline-delimited) |
-| Connection | CLI connects TO server | Server spawns and owns process |
-| Reconnect | CLI has built-in WS reconnection | Respawn process, use `thread/resume` |
+| Connection | Server spawns and owns process | Server spawns and owns process |
+| Reconnect | Respawn process, use `--resume` | Respawn process, use `thread/resume` |
 
 ## Initialization Sequence
 
