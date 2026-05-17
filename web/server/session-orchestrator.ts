@@ -74,6 +74,10 @@ export interface CreateSessionRequest {
   container?: { image?: string; ports?: number[]; volumes?: string[] };
   resumeSessionAt?: string;
   forkSession?: boolean;
+  disallowedTools?: string[];
+  appendSystemPrompt?: string;
+  effort?: string;
+  maxContextTokens?: number;
 }
 
 export type CreateSessionResult =
@@ -573,6 +577,10 @@ export class SessionOrchestrator {
           codexInternetAccess: backend === "codex",
           codexSandbox: backend === "codex" ? "danger-full-access" : undefined,
           allowedTools: body.allowedTools,
+          disallowedTools: body.disallowedTools,
+          appendSystemPrompt: body.appendSystemPrompt,
+          effort: body.effort,
+          maxContextTokens: body.maxContextTokens,
           env: envVars,
           backendType: backend,
           containerId,

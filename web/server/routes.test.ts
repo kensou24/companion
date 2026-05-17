@@ -106,6 +106,12 @@ vi.mock("./settings-manager.js", () => ({
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
     updatedAt: 0,
   })),
   updateSettings: vi.fn((patch) => ({
@@ -1156,6 +1162,12 @@ describe("GET /api/sessions/:id/archive-info", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     const res = await app.request("/api/sessions/s1/archive-info", { method: "GET" });
@@ -1532,6 +1544,12 @@ describe("GET /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 123,
     });
 
@@ -1566,6 +1584,12 @@ describe("GET /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
     });
   });
 
@@ -1600,6 +1624,12 @@ describe("GET /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 123,
     });
 
@@ -1634,6 +1664,12 @@ describe("GET /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
     });
   });
 
@@ -1669,6 +1705,12 @@ describe("GET /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 100,
     });
 
@@ -1712,6 +1754,12 @@ describe("PUT /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 456,
     });
 
@@ -1768,6 +1816,12 @@ describe("PUT /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
     });
   });
 
@@ -1802,6 +1856,12 @@ describe("PUT /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 789,
     });
 
@@ -1853,6 +1913,12 @@ describe("PUT /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 999,
     });
 
@@ -1955,6 +2021,12 @@ describe("PUT /api/settings", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 500,
     });
 
@@ -2187,6 +2259,12 @@ describe("GET /api/linear/issues", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     vi.mocked(resolveApiKey).mockReturnValue(null);
@@ -2228,6 +2306,12 @@ describe("GET /api/linear/issues", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2322,6 +2406,12 @@ describe("GET /api/linear/issues", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2423,6 +2513,12 @@ describe("GET /api/linear/issues", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2489,6 +2585,12 @@ describe("GET /api/linear/connection", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     vi.mocked(resolveApiKey).mockReturnValue(null);
@@ -2530,6 +2632,12 @@ describe("GET /api/linear/connection", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2593,6 +2701,12 @@ describe("POST /api/linear/issues/:id/transition", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2638,6 +2752,12 @@ describe("POST /api/linear/issues/:id/transition", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2682,6 +2802,12 @@ describe("POST /api/linear/issues/:id/transition", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     vi.mocked(resolveApiKey).mockReturnValue(null);
@@ -2728,6 +2854,12 @@ describe("POST /api/linear/issues/:id/transition", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2808,6 +2940,12 @@ describe("POST /api/linear/issues/:id/transition", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2867,6 +3005,12 @@ describe("GET /api/linear/projects", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     vi.mocked(resolveApiKey).mockReturnValue(null);
@@ -2908,6 +3052,12 @@ describe("GET /api/linear/projects", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -2979,6 +3129,12 @@ describe("GET /api/linear/project-issues", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     vi.mocked(resolveApiKey).mockReturnValue(null);
@@ -3020,6 +3176,12 @@ describe("GET /api/linear/project-issues", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -3106,6 +3268,12 @@ describe("GET /api/linear/project-issues", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 

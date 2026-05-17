@@ -433,6 +433,8 @@ export interface SessionState {
   linearSessionId?: string;
   /** If this session is linked to a WeChat user */
   wechatUserId?: string;
+  /** If this session is linked to a Feishu user */
+  feishuUserId?: string;
 }
 
 // ─── MCP Types ───────────────────────────────────────────────────────────────

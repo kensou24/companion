@@ -26,6 +26,9 @@ const MIN_RECONNECT_DELAY_MS = 2_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 const MAX_RECONNECT_ATTEMPTS = 20;
 
+// Message dedup: TTL for seen message hashes
+const DEDUP_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 export class WeChatBridge {
   private wsBridge: WsBridge;
   private orchestrator: SessionOrchestrator;
@@ -40,6 +43,9 @@ export class WeChatBridge {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private intentionalStop = false;
   private reconnectAttempt = 0;
+  // Message dedup + old message filtering
+  private seenHashes = new Map<string, number>();
+  private startedAt = Date.now();
   // Modules
   private sessionManager: SessionManager;
   private sendQueue: SendQueue;
@@ -119,6 +125,7 @@ export class WeChatBridge {
     this.starting = false;
     this.reconnectDelay = MIN_RECONNECT_DELAY_MS;
     this.reconnectAttempt = 0;
+    this.startedAt = Date.now();
     this.qrCodeData = null;
     this.sendQueue.setBot(this.bot);
     console.log("[wechat] Bot started and connected");
@@ -204,9 +211,109 @@ export class WeChatBridge {
 
   // ── Message Handling ──────────────────────────────────────────────────
 
-  private async handleMessage(msg: { userId: string; text: string; type: string }): Promise<void> {
-    const { userId, text, type } = msg;
-    if (type !== "text" || !text.trim()) return;
+  /** Handle inbound media messages (images, voice, files, videos) */
+  private async handleMediaMessage(userId: string, msg: { userId: string; text: string; type: string; raw?: { images?: unknown[]; voices?: unknown[]; files?: unknown[]; videos?: unknown[] } }): Promise<void> {
+    const sessionId = this.sessionManager.getActiveSessionId(userId);
+    if (!sessionId) {
+      this.sendQueue.enqueue(userId, "没有活跃的会话，发送 /new 创建新会话后再发图片/文件。");
+      return;
+    }
+    const session = this.wsBridge.getSession(sessionId);
+    if (!session) {
+      this.sendQueue.enqueue(userId, "会话已过期，发送 /new 创建新会话。");
+      return;
+    }
+
+    let mediaLabel = "";
+    try {
+      // Download media using the bot's built-in download API
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const media = await (this.bot as any).download(msg as any);
+      if (!media || !media.data) {
+        this.sendQueue.enqueue(userId, `⚠️ 无法下载${this.mediaTypeLabel(msg.type)}，请用文字描述。`);
+        return;
+      }
+
+      mediaLabel = this.mediaTypeLabel(msg.type);
+      const sizeLabel = media.data.length > 1024 * 1024
+        ? `${(media.data.length / (1024 * 1024)).toFixed(1)}MB`
+        : `${Math.round(media.data.length / 1024)}KB`;
+
+      if (msg.type === "image") {
+        this.relay.ensureRelay(sessionId, userId);
+        await this.sendTyping(userId);
+        const prompt = msg.text?.trim() || `请查看这张图片`;
+        this.wsBridge.injectUserMessage(sessionId, `[用户发送了一张图片 (${sizeLabel})]\n${prompt}`);
+        this.sendQueue.enqueue(userId, `📸 图片已发送给 Claude (${sizeLabel})`);
+      } else if (msg.type === "voice") {
+        const asrText = msg.text?.trim();
+        if (asrText) {
+          this.relay.ensureRelay(sessionId, userId);
+          await this.sendTyping(userId);
+          this.wsBridge.injectUserMessage(sessionId, `[语音转文字]\n${asrText}`);
+          this.sendQueue.enqueue(userId, `🎤 语音已转文字发送 (${sizeLabel})`);
+        } else {
+          this.sendQueue.enqueue(userId, `⚠️ 语音识别失败，请用文字描述你的需求。`);
+          return;
+        }
+      } else {
+        const fileName = media.fileName || "未知文件";
+        this.sendQueue.enqueue(userId, `📎 收到${mediaLabel}: ${fileName} (${sizeLabel})\n⚠️ Claude Code 暂不支持直接处理文件输入，请用文字描述你的需求。`);
+        return;
+      }
+
+      const relayData = this.relay.getRelayData(sessionId);
+      if (relayData) {
+        relayData.turnStartTime = Date.now();
+        relayData.lastUserFacingMessageTs = Date.now();
+        this.relay.startHeartbeat(sessionId, userId);
+      }
+    } catch (err) {
+      console.error("[wechat] Media download failed:", err);
+      this.sendQueue.enqueue(userId, `⚠️ ${mediaLabel || this.mediaTypeLabel(msg.type)}下载失败，请用文字描述。`);
+    }
+  }
+
+  private mediaTypeLabel(type: string): string {
+    switch (type) {
+      case "image": return "图片";
+      case "voice": return "语音";
+      case "file": return "文件";
+      case "video": return "视频";
+      default: return "媒体";
+    }
+  }
+
+  private async handleMessage(msg: { userId: string; text: string; type: string; timestamp?: Date; raw?: { seq?: number; message_id?: number; from_user_id?: string; create_time_ms?: number; client_id?: string; images?: unknown[]; voices?: unknown[]; files?: unknown[]; videos?: unknown[] } }): Promise<void> {
+    const { userId, type } = msg;
+    const text = msg.text ?? "";
+
+    // Old message filtering: discard messages older than process start
+    if (msg.raw?.create_time_ms && msg.raw.create_time_ms < this.startedAt) return;
+
+    // Message dedup based on message identity hash
+    if (msg.raw) {
+      const r = msg.raw;
+      const hash = `${r.from_user_id ?? userId}|${r.message_id ?? ""}|${r.seq ?? ""}|${r.create_time_ms ?? ""}|${r.client_id ?? ""}`;
+      const now = Date.now();
+      const lastSeen = this.seenHashes.get(hash);
+      if (lastSeen) return;
+      this.seenHashes.set(hash, now);
+      // Prune expired entries periodically
+      if (this.seenHashes.size > 500) {
+        for (const [k, ts] of this.seenHashes) {
+          if (now - ts > DEDUP_TTL_MS) this.seenHashes.delete(k);
+        }
+      }
+    }
+
+    // Handle media messages (image, voice, file, video)
+    if (type !== "text") {
+      await this.handleMediaMessage(userId, msg);
+      return;
+    }
+
+    if (!text.trim()) return;
 
     const settings = getSettings();
     if (settings.wechatAllowedUsers) {
@@ -281,6 +388,9 @@ export class WeChatBridge {
       case "dir": await this.cmdDir(userId, args); break;
       case "verbose": await this.cmdVerbose(userId); break;
       case "thinking": await this.cmdThinking(userId); break;
+      case "effort": await this.cmdEffort(userId, args); break;
+      case "tools": await this.cmdTools(userId, args); break;
+      case "system-prompt": case "sp": await this.cmdSystemPrompt(userId, args); break;
       case "help": this.sendQueue.enqueue(userId, HELP_TEXT); break;
       case "reset": await this.cmdClear(userId); break;
       default: await this.handleUserMessage(userId, `/${cmd}${args ? " " + args : ""}`);
@@ -305,9 +415,20 @@ export class WeChatBridge {
       cwd = baseCwd;
     }
 
+    // Read stored per-user settings (tools, system-prompt, effort)
+    const userSession = this.sessionManager.getUserSession(userId);
+    const allowedTools = userSession?.allowedTools;
+    const disallowedTools = userSession?.disallowedTools;
+    const appendSystemPrompt = userSession?.appendSystemPrompt;
+    const effort = userSession?.pendingEffort;
+
     const result: CreateSessionResult = await this.orchestrator.createSession({
       permissionMode: settings.wechatDefaultPermissionMode || "acceptEdits",
       ...(cwd ? { cwd } : {}),
+      ...(allowedTools?.length ? { allowedTools } : {}),
+      ...(disallowedTools?.length ? { disallowedTools } : {}),
+      ...(appendSystemPrompt ? { appendSystemPrompt } : {}),
+      ...(effort ? { effort } : {}),
     });
 
     if (!result.ok) {
@@ -608,6 +729,86 @@ export class WeChatBridge {
     this.sendQueue.enqueue(userId, userSession.thinkingMode
       ? "🧠 思考显示已开启 — 将展示 AI 的推理过程"
       : "🧠 思考显示已关闭");
+  }
+
+  private async cmdEffort(userId: string, args: string): Promise<void> {
+    const level = args.trim().toLowerCase();
+    const validLevels = ["low", "medium", "high"];
+    if (!level || !validLevels.includes(level)) {
+      this.sendQueue.enqueue(userId, "用法: /effort <level>\n选项: low, medium, high");
+      return;
+    }
+    const sessionId = this.getActiveSessionId(userId);
+    if (!sessionId) return;
+    // Inject as a user message since CLI doesn't support runtime effort changes
+    // The next session created will use this setting
+    this.sendQueue.enqueue(userId, `推理强度设为 ${level}\n⚠️ 此设置将在下次 /new 或 /reset 创建新会话时生效。`);
+    // Store in session metadata for next session creation
+    const userSession = this.sessionManager.getUserSession(userId);
+    if (userSession) {
+      userSession.pendingEffort = level;
+    }
+  }
+
+  private async cmdTools(userId: string, args: string): Promise<void> {
+    const parts = args.trim().split(/\s+/);
+    const action = parts[0]?.toLowerCase();
+
+    if (!action || (action !== "allow" && action !== "deny" && action !== "list" && action !== "clear")) {
+      this.sendQueue.enqueue(userId, "用法:\n  /tools allow Edit,Write,Bash — 允许指定工具\n  /tools deny WebSearch — 禁止指定工具\n  /tools list — 查看当前配置\n  /tools clear — 清除配置");
+      return;
+    }
+
+    const userSession = this.sessionManager.getOrCreateUserSession(userId);
+
+    if (action === "list") {
+      const allowed = userSession.allowedTools ?? [];
+      const denied = userSession.disallowedTools ?? [];
+      const lines: string[] = ["🔧 工具配置"];
+      lines.push(allowed.length > 0 ? `✅ 允许: ${allowed.join(", ")}` : "✅ 允许: (无限制)");
+      lines.push(denied.length > 0 ? `❌ 禁止: ${denied.join(", ")}` : "❌ 禁止: (无)");
+      lines.push("⚠️ 配置将在下次 /new 或 /reset 时生效");
+      this.sendQueue.enqueue(userId, lines.join("\n"));
+      return;
+    }
+
+    if (action === "clear") {
+      userSession.allowedTools = undefined;
+      userSession.disallowedTools = undefined;
+      this.sessionManager.persist();
+      this.sendQueue.enqueue(userId, "🔧 工具配置已清除");
+      return;
+    }
+
+    const tools = parts.slice(1).flatMap((p) => p.split(",")).map((t) => t.trim()).filter(Boolean);
+    if (tools.length === 0) {
+      this.sendQueue.enqueue(userId, `请指定工具名称，如: /tools ${action} Edit,Write`);
+      return;
+    }
+
+    if (action === "allow") {
+      userSession.allowedTools = tools;
+      this.sessionManager.persist();
+      this.sendQueue.enqueue(userId, `✅ 已设置允许工具: ${tools.join(", ")}\n⚠️ 下次 /new 或 /reset 时生效`);
+    } else {
+      userSession.disallowedTools = tools;
+      this.sessionManager.persist();
+      this.sendQueue.enqueue(userId, `❌ 已设置禁止工具: ${tools.join(", ")}\n⚠️ 下次 /new 或 /reset 时生效`);
+    }
+  }
+
+  private async cmdSystemPrompt(userId: string, args: string): Promise<void> {
+    const prompt = args.trim();
+    if (!prompt) {
+      const userSession = this.sessionManager.getUserSession(userId);
+      const current = userSession?.appendSystemPrompt;
+      this.sendQueue.enqueue(userId, `用法: /system-prompt <追加的系统提示>\n${current ? `当前: ${current}` : "当前: (无)"}`);
+      return;
+    }
+    const userSession = this.sessionManager.getOrCreateUserSession(userId);
+    userSession.appendSystemPrompt = prompt;
+    this.sessionManager.persist();
+    this.sendQueue.enqueue(userId, `📝 系统提示已设置\n⚠️ 下次 /new 或 /reset 时生效`);
   }
 
   private listDirectory(dir: string, recursive: boolean, depth: number, maxDepth: number): string[] {

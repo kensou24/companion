@@ -69,6 +69,12 @@ beforeEach(() => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
     updatedAt: 0,
   });
 });
@@ -206,6 +212,12 @@ describe("linear-connections", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     // Need to reset so migration runs with updated mock
@@ -253,6 +265,12 @@ describe("linear-connections", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     _resetForTest(join(tempDir, "linear-connections-migrate.json"));
@@ -319,6 +337,12 @@ describe("linear-connections", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 

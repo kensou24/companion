@@ -32,6 +32,12 @@ export function registerSettingsRoutes(api: Hono): void {
       wechatAllowedUsers: settings.wechatAllowedUsers,
       wechatDefaultPermissionMode: settings.wechatDefaultPermissionMode,
       wechatDefaultCwd: settings.wechatDefaultCwd,
+      feishuEnabled: settings.feishuEnabled,
+      feishuAutoApproveSafe: settings.feishuAutoApproveSafe,
+      feishuForwardDangerous: settings.feishuForwardDangerous,
+      feishuAllowedUsers: settings.feishuAllowedUsers,
+      feishuDefaultPermissionMode: settings.feishuDefaultPermissionMode,
+      feishuDefaultCwd: settings.feishuDefaultCwd,
       publicUrl: settings.publicUrl,
       updateChannel: settings.updateChannel,
       dockerAutoUpdate: settings.dockerAutoUpdate,
@@ -127,6 +133,24 @@ export function registerSettingsRoutes(api: Hono): void {
     if (body.wechatDefaultCwd !== undefined && typeof body.wechatDefaultCwd !== "string") {
       return c.json({ error: "wechatDefaultCwd must be a string" }, 400);
     }
+    if (body.feishuEnabled !== undefined && typeof body.feishuEnabled !== "boolean") {
+      return c.json({ error: "feishuEnabled must be a boolean" }, 400);
+    }
+    if (body.feishuAutoApproveSafe !== undefined && typeof body.feishuAutoApproveSafe !== "boolean") {
+      return c.json({ error: "feishuAutoApproveSafe must be a boolean" }, 400);
+    }
+    if (body.feishuForwardDangerous !== undefined && typeof body.feishuForwardDangerous !== "boolean") {
+      return c.json({ error: "feishuForwardDangerous must be a boolean" }, 400);
+    }
+    if (body.feishuAllowedUsers !== undefined && typeof body.feishuAllowedUsers !== "string") {
+      return c.json({ error: "feishuAllowedUsers must be a string" }, 400);
+    }
+    if (body.feishuDefaultPermissionMode !== undefined && typeof body.feishuDefaultPermissionMode !== "string") {
+      return c.json({ error: "feishuDefaultPermissionMode must be a string" }, 400);
+    }
+    if (body.feishuDefaultCwd !== undefined && typeof body.feishuDefaultCwd !== "string") {
+      return c.json({ error: "feishuDefaultCwd must be a string" }, 400);
+    }
     const hasAnyField = body.anthropicApiKey !== undefined || body.anthropicModel !== undefined
       || body.claudeCodeOAuthToken !== undefined || body.openaiApiKey !== undefined
       || body.onboardingCompleted !== undefined
@@ -146,7 +170,13 @@ export function registerSettingsRoutes(api: Hono): void {
       || body.wechatForwardDangerous !== undefined
       || body.wechatAllowedUsers !== undefined
       || body.wechatDefaultPermissionMode !== undefined
-      || body.wechatDefaultCwd !== undefined;
+      || body.wechatDefaultCwd !== undefined
+      || body.feishuEnabled !== undefined
+      || body.feishuAutoApproveSafe !== undefined
+      || body.feishuForwardDangerous !== undefined
+      || body.feishuAllowedUsers !== undefined
+      || body.feishuDefaultPermissionMode !== undefined
+      || body.feishuDefaultCwd !== undefined;
     if (!hasAnyField) {
       return c.json({ error: "At least one settings field is required" }, 400);
     }
@@ -264,6 +294,30 @@ export function registerSettingsRoutes(api: Hono): void {
         typeof body.wechatDefaultCwd === "string"
           ? body.wechatDefaultCwd.trim()
           : undefined,
+      feishuEnabled:
+        typeof body.feishuEnabled === "boolean"
+          ? body.feishuEnabled
+          : undefined,
+      feishuAutoApproveSafe:
+        typeof body.feishuAutoApproveSafe === "boolean"
+          ? body.feishuAutoApproveSafe
+          : undefined,
+      feishuForwardDangerous:
+        typeof body.feishuForwardDangerous === "boolean"
+          ? body.feishuForwardDangerous
+          : undefined,
+      feishuAllowedUsers:
+        typeof body.feishuAllowedUsers === "string"
+          ? body.feishuAllowedUsers.trim()
+          : undefined,
+      feishuDefaultPermissionMode:
+        typeof body.feishuDefaultPermissionMode === "string"
+          ? body.feishuDefaultPermissionMode.trim()
+          : undefined,
+      feishuDefaultCwd:
+        typeof body.feishuDefaultCwd === "string"
+          ? body.feishuDefaultCwd.trim()
+          : undefined,
     });
 
     const connectionsAfterUpdate = listConnections();
@@ -291,6 +345,12 @@ export function registerSettingsRoutes(api: Hono): void {
       wechatAllowedUsers: settings.wechatAllowedUsers,
       wechatDefaultPermissionMode: settings.wechatDefaultPermissionMode,
       wechatDefaultCwd: settings.wechatDefaultCwd,
+      feishuEnabled: settings.feishuEnabled,
+      feishuAutoApproveSafe: settings.feishuAutoApproveSafe,
+      feishuForwardDangerous: settings.feishuForwardDangerous,
+      feishuAllowedUsers: settings.feishuAllowedUsers,
+      feishuDefaultPermissionMode: settings.feishuDefaultPermissionMode,
+      feishuDefaultCwd: settings.feishuDefaultCwd,
       publicUrl: settings.publicUrl,
       updateChannel: settings.updateChannel,
       dockerAutoUpdate: settings.dockerAutoUpdate,

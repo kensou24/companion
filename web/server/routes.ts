@@ -35,7 +35,9 @@ import { registerLinearConnectionRoutes } from "./routes/linear-connection-route
 import { getConnection, resolveApiKey } from "./linear-connections.js";
 import { registerLinearOAuthConnectionRoutes } from "./routes/linear-oauth-connection-routes.js";
 import { registerWeChatRoutes } from "./routes/wechat-routes.js";
+import { registerFeishuRoutes } from "./routes/feishu-routes.js";
 import type { WeChatBridge } from "./wechat-bridge.js";
+import type { FeishuBridge } from "./feishu/feishu-bridge.js";
 import { getSettings } from "./settings-manager.js";
 import { discoverClaudeSessions } from "./claude-session-discovery.js";
 import { getClaudeSessionHistoryPage } from "./claude-session-history.js";
@@ -64,6 +66,7 @@ export function createRoutes(
   linearAgentBridge?: import("./linear-agent-bridge.js").LinearAgentBridge,
   port?: number,
   wechatBridge?: WeChatBridge,
+  feishuBridge?: FeishuBridge,
 ) {
   const api = new Hono();
 
@@ -1271,6 +1274,11 @@ export function createRoutes(
   // ─── WeChat Bot ────────────────────────────────────────────────────
   if (wechatBridge) {
     registerWeChatRoutes(api, wechatBridge);
+  }
+
+  // ─── Feishu Bot ───────────────────────────────────────────────────
+  if (feishuBridge) {
+    registerFeishuRoutes(api, feishuBridge);
   }
 
   // ─── Recording Hub (hidden feature: COMPANION_RECORDING_HUB=1) ──────

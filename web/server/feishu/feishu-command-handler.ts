@@ -1,10 +1,10 @@
-// ─── WeChat Command Handler ───────────────────────────────────────────────
-// Command parsing and formatting for WeChat bridge commands.
-// Extracted from WeChatBridge for modular architecture.
+// ─── Feishu Command Handler ───────────────────────────────────────────────
+// Command parsing and formatting for Feishu bridge commands.
+// Extracted from FeishuBridge for modular architecture.
 
 import type { ParsedCommand } from "./types.js";
 
-/** Parse an incoming WeChat text into command or plain message. */
+/** Parse an incoming Feishu text into command or plain message. */
 export function parseCommand(text: string): ParsedCommand {
   if (!text.startsWith("/")) return { type: "message", text };
   const parts = text.slice(1).split(/\s+/);
@@ -28,7 +28,7 @@ function circledNum(n: number): string {
   return n < CIRCLED_NUMS.length ? CIRCLED_NUMS[n]! : `${n + 1}.`;
 }
 
-/** Format a single question from an AskUserQuestion input for WeChat display. */
+/** Format a single question from an AskUserQuestion input for Feishu display. */
 export function formatSingleQuestion(questions: Array<Record<string, unknown>>, index: number): string {
   const q = questions[index];
   if (!q) return "";
@@ -86,8 +86,10 @@ export function formatSessionList(
   ].join("\n");
 }
 
-export const HELP_TEXT = `🤖 Companion WeChat Bot
+export const HELP_TEXT = `🤖 Companion 飞书 Bot
 ━━━━━━━━━━━━━━━━━━
+
+支持私聊和群聊，在群聊中请 @机器人 触发回复。
 
 📋 会话管理
   /new [描述] — 新建会话（可带描述标题）
@@ -118,4 +120,4 @@ export const HELP_TEXT = `🤖 Companion WeChat Bot
 
 其他 /命令（如 /compact）会转发给 Claude Code。
 直接发送文字即可与当前会话对话。
-支持发送图片、语音、文件等媒体消息。`;
+支持发送图片、文件等媒体消息。`;

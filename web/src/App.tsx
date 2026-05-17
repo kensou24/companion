@@ -25,6 +25,7 @@ const LinearSettingsPage = lazy(() => import("./components/LinearSettingsPage.js
 const LinearOAuthSettingsPage = lazy(() => import("./components/LinearOAuthSettingsPage.js").then((m) => ({ default: m.LinearOAuthSettingsPage })));
 const TailscalePage = lazy(() => import("./components/TailscalePage.js").then((m) => ({ default: m.TailscalePage })));
 const WeChatSettingsPage = lazy(() => import("./components/WeChatSettingsPage.js").then((m) => ({ default: m.WeChatSettingsPage })));
+const FeishuSettingsPage = lazy(() => import("./components/FeishuSettingsPage.js").then((m) => ({ default: m.FeishuSettingsPage })));
 const PromptsPage = lazy(() => import("./components/PromptsPage.js").then((m) => ({ default: m.PromptsPage })));
 const EnvManager = lazy(() => import("./components/EnvManager.js").then((m) => ({ default: m.EnvManager })));
 const SandboxManager = lazy(() => import("./components/SandboxManager.js").then((m) => ({ default: m.SandboxManager })));
@@ -70,6 +71,7 @@ export default function App() {
   const isLinearOAuthIntegrationPage = route.page === "integration-linear-oauth";
   const isTailscaleIntegrationPage = route.page === "integration-tailscale";
   const isWeChatIntegrationPage = route.page === "integration-wechat";
+  const isFeishuIntegrationPage = route.page === "integration-feishu";
   const isEnvironmentsPage = route.page === "environments";
   const isSandboxesPage = route.page === "sandboxes";
   const isScheduledPage = route.page === "scheduled";
@@ -246,6 +248,12 @@ export default function App() {
           {isWeChatIntegrationPage && (
             <div className="absolute inset-0">
               <Suspense fallback={<LazyFallback />}><WeChatSettingsPage embedded /></Suspense>
+            </div>
+          )}
+
+          {isFeishuIntegrationPage && (
+            <div className="absolute inset-0">
+              <Suspense fallback={<LazyFallback />}><FeishuSettingsPage embedded /></Suspense>
             </div>
           )}
 

@@ -169,6 +169,14 @@ export interface LaunchOptions {
   systemPrompt?: string;
   /** Sandbox profile slug used for this session */
   sandboxSlug?: string;
+  /** Tools to explicitly disallow for Claude Code sessions. */
+  disallowedTools?: string[];
+  /** Append system prompt for Claude Code sessions. */
+  appendSystemPrompt?: string;
+  /** Reasoning effort level for Claude Code sessions (e.g. "low", "medium", "high"). */
+  effort?: string;
+  /** Maximum context token budget for Claude Code sessions. */
+  maxContextTokens?: number;
 }
 
 /**
@@ -526,6 +534,23 @@ export class CliLauncher {
       for (const tool of options.allowedTools) {
         args.push("--allowedTools", tool);
       }
+    }
+    if (options.disallowedTools) {
+      for (const tool of options.disallowedTools) {
+        args.push("--disallowedTools", tool);
+      }
+    }
+    if (options.systemPrompt) {
+      args.push("--system-prompt", options.systemPrompt);
+    }
+    if (options.appendSystemPrompt) {
+      args.push("--append-system-prompt", options.appendSystemPrompt);
+    }
+    if (options.effort) {
+      args.push("--effort", options.effort);
+    }
+    if (options.maxContextTokens) {
+      args.push("--max-context-tokens", String(options.maxContextTokens));
     }
     if (options.resumeSessionAt) {
       args.push("--resume-session-at", options.resumeSessionAt);

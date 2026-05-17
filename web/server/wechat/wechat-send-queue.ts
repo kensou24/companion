@@ -79,6 +79,12 @@ export class SendQueue {
     this.drain();
   }
 
+  /** Enqueue a media item (image, file, or video) for sending. */
+  enqueueMedia(userId: string, media: { type: "image" | "file" | "video"; data: Buffer; fileName?: string; caption?: string }, priority?: boolean): void {
+    this.queue.push({ userId, text: "", priority, media });
+    this.drain();
+  }
+
   async enqueueCritical(userId: string, text: string, context: string): Promise<boolean> {
     if (!this.bot?.isRunning) {
       console.warn(`[wechat-send] Bot not running, queuing critical: ${context}`);
@@ -155,7 +161,19 @@ export class SendQueue {
         let rateLimitHit = false;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
-            await this.bot.send(item.userId, item.text);
+            if (item.media) {
+              // Send media via bot.reply or bot.send with media content
+              const m = item.media;
+              if (m.type === "image") {
+                await this.bot.send(item.userId, { image: m.data, caption: m.caption });
+              } else if (m.type === "video") {
+                await this.bot.send(item.userId, { video: m.data, caption: m.caption });
+              } else {
+                await this.bot.send(item.userId, { file: m.data, fileName: m.fileName || "file", caption: m.caption });
+              }
+            } else {
+              await this.bot.send(item.userId, item.text);
+            }
             sent = true;
             this.lastSendTs = Date.now();
             break;

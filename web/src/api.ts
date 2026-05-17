@@ -427,6 +427,12 @@ export interface AppSettings {
   wechatAllowedUsers: string;
   wechatDefaultPermissionMode: string;
   wechatDefaultCwd: string;
+  feishuEnabled: boolean;
+  feishuAutoApproveSafe: boolean;
+  feishuForwardDangerous: boolean;
+  feishuAllowedUsers: string;
+  feishuDefaultPermissionMode: string;
+  feishuDefaultCwd: string;
 }
 
 export interface LinearOAuthConnectionSummary {
@@ -984,6 +990,15 @@ export const api = {
   reloginWeChat: () => post<{ ok: boolean }>("/wechat/relogin"),
   getWeChatSessions: () => get<{ sessions: Array<{ userId: string; activeSession: string | null; sessionCount: number }> }>("/wechat/sessions"),
   deleteWeChatSession: (userId: string) => del<{ ok: boolean }>(`/wechat/sessions/${encodeURIComponent(userId)}`),
+
+  // Feishu Bot
+  getFeishuStatus: () => get<{ running: boolean; starting: boolean; error: string | null; connectedUsers: number; reconnecting: boolean; hasConfig: boolean }>("/feishu/status"),
+  startFeishu: () => post<{ ok: boolean }>("/feishu/start"),
+  stopFeishu: () => post<{ ok: boolean }>("/feishu/stop"),
+  getFeishuConfig: () => get<{ configured: boolean; appId?: string; domain?: string; botName?: string; hasAppSecret?: boolean }>("/feishu/config"),
+  updateFeishuConfig: (config: { appId: string; appSecret: string; domain?: string; botName?: string }) => put<{ ok: boolean }>("/feishu/config", config),
+  getFeishuSessions: () => get<{ sessions: Array<{ userId: string; activeSession: string | null; sessionCount: number }> }>("/feishu/sessions"),
+  deleteFeishuSession: (userId: string) => del<{ ok: boolean }>(`/feishu/sessions/${encodeURIComponent(userId)}`),
 
   // Linear connections CRUD
   listLinearConnections: () =>

@@ -27,6 +27,7 @@ const mockApi = {
   listAgents: vi.fn(),
   listLinearOAuthConnections: vi.fn(),
   getWeChatStatus: vi.fn(),
+  getFeishuStatus: vi.fn(),
 };
 
 vi.mock("../api.js", () => ({
@@ -37,6 +38,7 @@ vi.mock("../api.js", () => ({
     listAgents: (...args: unknown[]) => mockApi.listAgents(...args),
     listLinearOAuthConnections: (...args: unknown[]) => mockApi.listLinearOAuthConnections(...args),
     getWeChatStatus: (...args: unknown[]) => mockApi.getWeChatStatus(...args),
+    getFeishuStatus: (...args: unknown[]) => mockApi.getFeishuStatus(...args),
   },
 }));
 
@@ -89,6 +91,7 @@ beforeEach(() => {
   mockApi.listAgents.mockResolvedValue([]);
   mockApi.listLinearOAuthConnections.mockResolvedValue({ connections: [] });
   mockApi.getWeChatStatus.mockResolvedValue({ running: false, starting: false, error: null, connectedUsers: 0, qrCode: null });
+  mockApi.getFeishuStatus.mockResolvedValue({ running: false, starting: false, error: null, connectedUsers: 0, reconnecting: false, hasConfig: false });
   window.location.hash = "#/integrations";
 });
 
