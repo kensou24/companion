@@ -55,6 +55,7 @@
     "@codemirror/lang-xml": "^6.1.0",
     "@codemirror/lang-yaml": "^6.1.2",
     "@codemirror/view": "6.39.15",
+    "@larksuiteoapi/node-sdk": "^1.64.0",
     "@uiw/react-codemirror": "4.25.4",
     "@wechatbot/wechatbot": "^2.0.1",
     "axe-core": "^4.11.1",

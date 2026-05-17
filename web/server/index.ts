@@ -33,6 +33,7 @@ import { authenticateManagedWebSocket } from "./ws-auth.js";
 import { LinearAgentBridge } from "./linear-agent-bridge.js";
 import { NoVncProxy } from "./novnc-proxy.js";
 import { WeChatBridge } from "./wechat-bridge.js";
+import { FeishuBridge } from "./feishu/feishu-bridge.js";
 import { getSettings } from "./settings-manager.js";
 
 import { startPeriodicCheck, setServiceMode } from "./update-checker.js";
@@ -73,6 +74,7 @@ const orchestrator = new SessionOrchestrator({
 });
 
 const wechatBridge = new WeChatBridge(wsBridge, orchestrator);
+const feishuBridge = new FeishuBridge(wsBridge, orchestrator);
 
 // ── Cloud relay connection (for receiving webhooks behind a firewall) ────────
 // The relay forwards platform webhooks (e.g. GitHub, Slack) to the Companion
@@ -137,7 +139,7 @@ if (managedAuthEnabled) {
 }
 
 app.use("/api/*", cors());
-app.route("/api", createRoutes(orchestrator, launcher, wsBridge, terminalManager, prPoller, recorder, cronScheduler, agentExecutor, linearAgentBridge, port, wechatBridge));
+app.route("/api", createRoutes(orchestrator, launcher, wsBridge, terminalManager, prPoller, recorder, cronScheduler, agentExecutor, linearAgentBridge, port, wechatBridge, feishuBridge));
 
 // Dynamic manifest — embeds auth token in start_url so PWA auto-authenticates
 // on first launch. iOS gives standalone PWAs isolated storage from Safari,
@@ -335,6 +337,20 @@ if (_wechatSettings.wechatEnabled) {
   });
 }
 
+// ── Feishu Bot ───────────────────────────────────────────────────────────────
+if (_wechatSettings.feishuEnabled) {
+  feishuBridge.start().then(() => {
+    if (feishuBridge.isRunning) {
+      console.log("[server] Feishu bot started");
+    } else {
+      const status = feishuBridge.getStatus();
+      console.warn("[server] Feishu bot could not start:", status.error);
+    }
+  }).catch((err: unknown) => {
+    console.error("[server] Feishu bot failed to start:", err);
+  });
+}
+
 // ── Image pull manager — pre-pull missing Docker images for environments ────
 imagePullManager.initFromEnvironments();
 
@@ -384,6 +400,7 @@ setInterval(() => {
 function gracefulShutdown() {
   console.log("[server] Persisting container state before shutdown...");
   wechatBridge.stop();
+  feishuBridge.stop();
   containerManager.persistState(CONTAINER_STATE_PATH);
   cleanupTailscaleFunnel(port);
   closeLogFile();

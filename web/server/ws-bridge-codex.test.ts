@@ -143,6 +143,12 @@ describe("attachCodexAdapterHandlers", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
   });
@@ -1137,6 +1143,12 @@ describe("attachCodexAdapterHandlers", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
         updatedAt: 0,
       });
     }
@@ -1319,6 +1331,12 @@ describe("attachCodexAdapterHandlers", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
         updatedAt: 0,
       });
 
@@ -1371,6 +1389,12 @@ describe("attachCodexAdapterHandlers", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
         updatedAt: 0,
       });
 
@@ -1488,6 +1512,12 @@ describe("attachCodexAdapterHandlers", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
         updatedAt: 0,
       });
 
@@ -1624,6 +1654,12 @@ describe("attachCodexAdapterHandlers", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
         updatedAt: 0,
       });
 

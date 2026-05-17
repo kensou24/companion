@@ -16,6 +16,7 @@ export function IntegrationsPage({ embedded = false }: IntegrationsPageProps) {
   const [oauthConnections, setOauthConnections] = useState<LinearOAuthConnectionSummary[]>([]);
   const [linearAgents, setLinearAgents] = useState<AgentInfo[]>([]);
   const [wechatRunning, setWechatRunning] = useState(false);
+  const [feishuRunning, setFeishuRunning] = useState(false);
 
   useEffect(() => {
     // Load Tailscale status (non-blocking)
@@ -52,6 +53,11 @@ export function IntegrationsPage({ embedded = false }: IntegrationsPageProps) {
     // Load WeChat bot status
     api.getWeChatStatus()
       .then((s) => setWechatRunning(s.running))
+      .catch(() => {});
+
+    // Load Feishu bot status
+    api.getFeishuStatus()
+      .then((s) => setFeishuRunning(s.running))
       .catch(() => {});
   }, []);
 
@@ -302,6 +308,54 @@ export function IntegrationsPage({ embedded = false }: IntegrationsPageProps) {
               aria-label="Open WeChat Bot settings"
               title="Open WeChat Bot settings"
               className="absolute bottom-0 right-0 sm:bottom-0 sm:right-0 inline-flex h-10 w-10 items-center justify-center rounded-full border border-green-500/28 bg-green-500/12 text-cc-fg transition-colors hover:border-green-500/50 hover:bg-green-500/20 focus:outline-none focus:ring-2 focus:ring-green-500/35 cursor-pointer"
+            >
+              <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                <path d="M9.67 4.53 10 2h4l.33 2.53a7.9 7.9 0 0 1 1.7.7l2.03-1.55 2.83 2.83-1.55 2.03c.28.54.51 1.1.7 1.7L22 10v4l-2.53.33a7.9 7.9 0 0 1-.7 1.7l1.55 2.03-2.83 2.83-2.03-1.55c-.54.28-1.1.51-1.7.7L14 22h-4l-.33-2.53a7.9 7.9 0 0 1-1.7-.7l-2.03 1.55-2.83-2.83 1.55-2.03a7.9 7.9 0 0 1-.7-1.7L2 14v-4l2.53-.33c.19-.6.42-1.16.7-1.7L3.68 5.94 6.5 3.1l2.03 1.55c.54-.28 1.1-.51 1.7-.7Z" />
+                <circle cx="12" cy="12" r="3.2" />
+              </svg>
+            </button>
+          </div>
+        </section>
+
+        {/* Feishu Bot card */}
+        <section className="group relative mt-6 overflow-hidden rounded-3xl border border-cc-border/80 bg-cc-card p-5 pb-16 sm:p-7 sm:pb-7 transition-all duration-300 hover:border-cc-primary/35 hover:shadow-[0_18px_44px_rgba(0,0,0,0.18)]">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(80%_140%_at_100%_0%,rgba(59,130,246,0.18),transparent_52%)]" />
+          <div className="pointer-events-none absolute inset-0 opacity-30 bg-[linear-gradient(120deg,transparent_0%,rgba(255,255,255,0.04)_35%,transparent_62%)]" />
+          <div className="relative min-w-0">
+            <div className="min-w-0">
+              <div className="inline-flex items-center gap-2 rounded-full border border-cc-border bg-cc-hover/55 px-3 py-1.5 text-xs tracking-wide text-cc-muted">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M21 4H3a1 1 0 00-1 1v14a1 1 0 001 1h18a1 1 0 001-1V5a1 1 0 00-1-1zM4 6l8 5 8-5v2.5L12 14 4 8.5V6z"/>
+                </svg>
+                <span>飞书 Bot</span>
+                {feishuRunning && (
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full bg-cc-success shadow-[0_0_0_3px_rgba(34,197,94,0.15)]"
+                    aria-label="Running"
+                    title="Running"
+                  />
+                )}
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-2.5">
+                <h2 className="text-[clamp(1.45rem,2.6vw,2rem)] font-semibold leading-[1.12] tracking-tight text-cc-fg">
+                  通过飞书控制会话
+                </h2>
+              </div>
+              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-cc-muted sm:text-[15px]">
+                使用飞书机器人控制 Claude Code 会话。支持私聊和群聊 @机器人，WebSocket 长连接无需公网 IP。
+              </p>
+              <div className="mt-4 inline-flex max-w-full items-center rounded-lg border border-cc-border/80 bg-black/10 px-3 py-1.5 text-xs text-cc-muted/95">
+                <span className="truncate">{feishuRunning ? "Bot connected" : "Not configured"}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                window.location.hash = "#/integrations/feishu";
+              }}
+              aria-label="Open Feishu Bot settings"
+              title="Open Feishu Bot settings"
+              className="absolute bottom-0 right-0 sm:bottom-0 sm:right-0 inline-flex h-10 w-10 items-center justify-center rounded-full border border-blue-500/28 bg-blue-500/12 text-cc-fg transition-colors hover:border-blue-500/50 hover:bg-blue-500/20 focus:outline-none focus:ring-2 focus:ring-blue-500/35 cursor-pointer"
             >
               <svg viewBox="0 0 24 24" className="h-4.5 w-4.5" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
                 <path d="M9.67 4.53 10 2h4l.33 2.53a7.9 7.9 0 0 1 1.7.7l2.03-1.55 2.83 2.83-1.55 2.03c.28.54.51 1.1.7 1.7L22 10v4l-2.53.33a7.9 7.9 0 0 1-.7 1.7l1.55 2.03-2.83 2.83-2.03-1.55c-.54.28-1.1.51-1.7.7L14 22h-4l-.33-2.53a7.9 7.9 0 0 1-1.7-.7l-2.03 1.55-2.83-2.83 1.55-2.03a7.9 7.9 0 0 1-.7-1.7L2 14v-4l2.53-.33c.19-.6.42-1.16.7-1.7L3.68 5.94 6.5 3.1l2.03 1.55c.54-.28 1.1-.51 1.7-.7Z" />

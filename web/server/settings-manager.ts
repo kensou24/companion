@@ -55,6 +55,18 @@ export interface CompanionSettings {
   wechatDefaultPermissionMode: string;
   /** Default working directory for new WeChat-spawned sessions */
   wechatDefaultCwd: string;
+  /** Whether the Feishu bot channel is enabled */
+  feishuEnabled: boolean;
+  /** Auto-approve safe tools without forwarding to Feishu */
+  feishuAutoApproveSafe: boolean;
+  /** Forward dangerous tool permissions to Feishu for manual approval */
+  feishuForwardDangerous: boolean;
+  /** Comma-separated Feishu userId (open_id) whitelist (empty = allow all users) */
+  feishuAllowedUsers: string;
+  /** Default permission mode for new Feishu-spawned sessions */
+  feishuDefaultPermissionMode: string;
+  /** Default working directory for new Feishu-spawned sessions */
+  feishuDefaultCwd: string;
   updatedAt: number;
 }
 
@@ -89,6 +101,12 @@ let settings: CompanionSettings = {
   wechatAllowedUsers: "",
   wechatDefaultPermissionMode: "acceptEdits",
   wechatDefaultCwd: "",
+  feishuEnabled: false,
+  feishuAutoApproveSafe: true,
+  feishuForwardDangerous: true,
+  feishuAllowedUsers: "",
+  feishuDefaultPermissionMode: "acceptEdits",
+  feishuDefaultCwd: "",
   publicUrl: "",
   updateChannel: "stable",
   dockerAutoUpdate: false,
@@ -126,6 +144,12 @@ function normalize(raw: Partial<CompanionSettings> | null | undefined): Companio
     wechatAllowedUsers: typeof raw?.wechatAllowedUsers === "string" ? raw.wechatAllowedUsers : "",
     wechatDefaultPermissionMode: typeof raw?.wechatDefaultPermissionMode === "string" && raw.wechatDefaultPermissionMode.trim() ? raw.wechatDefaultPermissionMode : "acceptEdits",
     wechatDefaultCwd: typeof raw?.wechatDefaultCwd === "string" ? raw.wechatDefaultCwd.trim() : "",
+    feishuEnabled: typeof raw?.feishuEnabled === "boolean" ? raw.feishuEnabled : false,
+    feishuAutoApproveSafe: typeof raw?.feishuAutoApproveSafe === "boolean" ? raw.feishuAutoApproveSafe : true,
+    feishuForwardDangerous: typeof raw?.feishuForwardDangerous === "boolean" ? raw.feishuForwardDangerous : true,
+    feishuAllowedUsers: typeof raw?.feishuAllowedUsers === "string" ? raw.feishuAllowedUsers : "",
+    feishuDefaultPermissionMode: typeof raw?.feishuDefaultPermissionMode === "string" && raw.feishuDefaultPermissionMode.trim() ? raw.feishuDefaultPermissionMode : "acceptEdits",
+    feishuDefaultCwd: typeof raw?.feishuDefaultCwd === "string" ? raw.feishuDefaultCwd.trim() : "",
     publicUrl: typeof raw?.publicUrl === "string" ? raw.publicUrl.trim().replace(/\/+$/, "") : "",
     updateChannel: raw?.updateChannel === "prerelease" ? "prerelease" : "stable",
     dockerAutoUpdate: typeof raw?.dockerAutoUpdate === "boolean" ? raw.dockerAutoUpdate : false,
@@ -157,7 +181,7 @@ export function getSettings(): CompanionSettings {
 }
 
 export function updateSettings(
-  patch: Partial<Pick<CompanionSettings, "anthropicApiKey" | "anthropicModel" | "claudeCodeOAuthToken" | "openaiApiKey" | "onboardingCompleted" | "linearApiKey" | "linearAutoTransition" | "linearAutoTransitionStateId" | "linearAutoTransitionStateName" | "linearArchiveTransition" | "linearArchiveTransitionStateId" | "linearArchiveTransitionStateName" | "linearOAuthClientId" | "linearOAuthClientSecret" | "linearOAuthWebhookSecret" | "linearOAuthAccessToken" | "linearOAuthRefreshToken" | "aiValidationEnabled" | "aiValidationAutoApprove" | "aiValidationAutoDeny" | "wechatEnabled" | "wechatAutoApproveSafe" | "wechatForwardDangerous" | "wechatAllowedUsers" | "wechatDefaultPermissionMode" | "wechatDefaultCwd" | "publicUrl" | "updateChannel" | "dockerAutoUpdate">>,
+  patch: Partial<Pick<CompanionSettings, "anthropicApiKey" | "anthropicModel" | "claudeCodeOAuthToken" | "openaiApiKey" | "onboardingCompleted" | "linearApiKey" | "linearAutoTransition" | "linearAutoTransitionStateId" | "linearAutoTransitionStateName" | "linearArchiveTransition" | "linearArchiveTransitionStateId" | "linearArchiveTransitionStateName" | "linearOAuthClientId" | "linearOAuthClientSecret" | "linearOAuthWebhookSecret" | "linearOAuthAccessToken" | "linearOAuthRefreshToken" | "aiValidationEnabled" | "aiValidationAutoApprove" | "aiValidationAutoDeny" | "wechatEnabled" | "wechatAutoApproveSafe" | "wechatForwardDangerous" | "wechatAllowedUsers" | "wechatDefaultPermissionMode" | "wechatDefaultCwd" | "feishuEnabled" | "feishuAutoApproveSafe" | "feishuForwardDangerous" | "feishuAllowedUsers" | "feishuDefaultPermissionMode" | "feishuDefaultCwd" | "publicUrl" | "updateChannel" | "dockerAutoUpdate">>,
 ): CompanionSettings {
   ensureLoaded();
   settings = normalize({
@@ -187,6 +211,12 @@ export function updateSettings(
     wechatAllowedUsers: patch.wechatAllowedUsers ?? settings.wechatAllowedUsers,
     wechatDefaultPermissionMode: patch.wechatDefaultPermissionMode ?? settings.wechatDefaultPermissionMode,
     wechatDefaultCwd: patch.wechatDefaultCwd ?? settings.wechatDefaultCwd,
+    feishuEnabled: patch.feishuEnabled ?? settings.feishuEnabled,
+    feishuAutoApproveSafe: patch.feishuAutoApproveSafe ?? settings.feishuAutoApproveSafe,
+    feishuForwardDangerous: patch.feishuForwardDangerous ?? settings.feishuForwardDangerous,
+    feishuAllowedUsers: patch.feishuAllowedUsers ?? settings.feishuAllowedUsers,
+    feishuDefaultPermissionMode: patch.feishuDefaultPermissionMode ?? settings.feishuDefaultPermissionMode,
+    feishuDefaultCwd: patch.feishuDefaultCwd ?? settings.feishuDefaultCwd,
     publicUrl: patch.publicUrl ?? settings.publicUrl,
     updateChannel: patch.updateChannel ?? settings.updateChannel,
     dockerAutoUpdate: patch.dockerAutoUpdate ?? settings.dockerAutoUpdate,

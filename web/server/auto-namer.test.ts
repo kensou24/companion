@@ -43,6 +43,12 @@ beforeEach(() => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
     updatedAt: 0,
   });
 });
@@ -92,6 +98,12 @@ describe("generateSessionTitle", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
 
@@ -148,6 +160,12 @@ describe("generateSessionTitle", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     mockFetch.mockResolvedValueOnce({
@@ -233,6 +251,12 @@ describe("generateSessionTitle", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
     mockFetch.mockResolvedValueOnce({

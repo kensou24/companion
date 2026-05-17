@@ -54,6 +54,12 @@ describe("settings-manager", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
   });
@@ -115,6 +121,12 @@ describe("settings-manager", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 123,
     });
   });
@@ -200,6 +212,12 @@ describe("settings-manager", () => {
       wechatAllowedUsers: "",
       wechatDefaultPermissionMode: "acceptEdits",
       wechatDefaultCwd: "",
+      feishuEnabled: false,
+      feishuAutoApproveSafe: true,
+      feishuForwardDangerous: true,
+      feishuAllowedUsers: "",
+      feishuDefaultPermissionMode: "acceptEdits",
+      feishuDefaultCwd: "",
       updatedAt: 0,
     });
   });

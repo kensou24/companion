@@ -9,6 +9,7 @@ export type Route =
   | { page: "integration-linear-oauth" }
   | { page: "integration-tailscale" }
   | { page: "integration-wechat" }
+  | { page: "integration-feishu" }
   | { page: "prompts" }
   | { page: "environments" }
   | { page: "sandboxes" }
@@ -40,6 +41,7 @@ export function parseHash(hash: string): Route {
   if (hash === "#/integrations/linear-oauth") return { page: "integration-linear-oauth" };
   if (hash === "#/integrations/tailscale") return { page: "integration-tailscale" };
   if (hash === "#/integrations/wechat") return { page: "integration-wechat" };
+  if (hash === "#/integrations/feishu") return { page: "integration-feishu" };
   if (hash === "#/prompts") return { page: "prompts" };
   if (hash === "#/environments") return { page: "environments" };
   if (hash === "#/sandboxes") return { page: "sandboxes" };

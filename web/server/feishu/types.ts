@@ -1,9 +1,9 @@
-// Shared types for WeChat bridge modules.
+// Shared types for Feishu bridge modules.
 
 import type { WsBridge } from "../ws-bridge.js";
 import type { SessionOrchestrator } from "../session-orchestrator.js";
 
-export interface WeChatUserSession {
+export interface FeishuUserSession {
   sessionIds: string[];
   activeSessionIndex: number;
   pendingPermissions: Map<string, PendingPermission>;
@@ -51,7 +51,7 @@ export type ParsedCommand =
   | { type: "message"; text: string }
   | { type: "command"; command: string; args: string };
 
-export interface SessionRelayData {
+export interface FeishuRelayData {
   pendingText: string;
   lastTypingTs: number;
   streamlinedSent: boolean;
@@ -72,22 +72,77 @@ export interface SessionRelayData {
   lastActiveToolName: string;
 }
 
-export interface SendQueueItem {
-  userId: string;
+export interface FeishuSendQueueItem {
+  chatId: string;
   text: string;
   priority?: boolean;
   _resolve?: (result: "ok" | "failed") => void;
-  /** Optional media content to send instead of text */
-  media?: { type: "image" | "file" | "video"; data: Buffer; fileName?: string; caption?: string };
+  /** Optional media content to send instead of or alongside text */
+  media?: FeishuMediaContent;
+  /** Serialized Feishu card JSON string — when set, sent as msg_type="interactive" */
+  card?: string;
 }
 
-export interface CriticalPendingItem {
-  userId: string;
-  text: string;
-  context: string;
+export interface FeishuMediaContent {
+  type: "image" | "file" | "audio" | "video" | "rich_text";
+  data: Buffer;
+  fileName?: string;
+  caption?: string;
+  /** Feishu-rich text segments (used when type is "rich_text") */
+  richTextSections?: FeishuRichTextSection[];
 }
 
-export interface BridgeDeps {
+export interface FeishuRichTextSection {
+  content: string;
+  /** Optional Feishu text style flags (bold, italic, etc.) */
+  style?: {
+    bold?: boolean;
+    italic?: boolean;
+    underline?: boolean;
+    strikethrough?: boolean;
+    code?: boolean;
+  };
+  /** Optional hyperlink */
+  href?: string;
+}
+
+export interface FeishuBridgeDeps {
   wsBridge: WsBridge;
   orchestrator: SessionOrchestrator;
+}
+
+export interface FeishuConfig {
+  /** Feishu app ID */
+  appId: string;
+  /** Feishu app secret */
+  appSecret: string;
+  /** Feishu verification token for event subscription */
+  verificationToken?: string;
+  /** Feishu encrypt key for event subscription */
+  encryptKey?: string;
+  /** Public domain for Feishu callback URL */
+  domain: string;
+  /** Callback path for Feishu event subscription (default: /feishu/event) */
+  eventPath?: string;
+  /** Bot name displayed in messages */
+  botName?: string;
+}
+
+export interface FeishuMessageContext {
+  /** Feishu chat / group ID (chat_xxx) */
+  chatId: string;
+  /** Feishu user ID of the message sender (ou_xxx) */
+  userId: string;
+  /** Feishu message ID (om_xxx) */
+  messageId: string;
+  /** Chat type: "p2p" for direct messages, "group" for group chats */
+  chatType: "p2p" | "group";
+  /** Message type: "text", "image", "file", etc. */
+  messageType: string;
+  /** Root message ID for threaded replies */
+  rootMessageId?: string;
+  /** Parent message ID for replies */
+  parentMessageId?: string;
+  /** Whether the message mentions the bot (for group chats) */
+  mentionBot?: boolean;
 }

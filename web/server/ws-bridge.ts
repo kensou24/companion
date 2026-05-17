@@ -553,15 +553,17 @@ export class WsBridge {
         metricsCollector.recordPermissionRequested(perm.request_id, session.id);
 
         // AI Validation Mode: evaluate the tool call before showing to user
-        // Skip AI validation for WeChat sessions — WeChat bridge handles permissions itself
+        // Skip AI validation for WeChat/Feishu sessions — bridge handles permissions itself
         const aiSettings = getEffectiveAiValidation(session.state);
         const isWechatSession = !!session.state.wechatUserId;
+        const isFeishuSession = !!session.state.feishuUserId;
         if (
           aiSettings.enabled
           && aiSettings.anthropicApiKey
           && perm.tool_name !== "AskUserQuestion" && !perm.tool_name.endsWith("__AskUserQuestion")
           && perm.tool_name !== "ExitPlanMode" && !perm.tool_name.endsWith("__ExitPlanMode")
           && !isWechatSession
+          && !isFeishuSession
         ) {
           // Run AI validation async
           this.handleAiValidation(session, adapter, perm).catch((err) => {
