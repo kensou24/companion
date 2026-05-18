@@ -336,16 +336,10 @@ export class FeishuBridge {
     this.relay.ensureRelay(sessionId, userId, chatId);
     await this.sendTyping(chatId);
 
-    // Send "thinking" indicator — will be recalled when content arrives
+    // Send "processing" indicator
     const relayData = this.relay.getRelayData(sessionId);
     if (relayData) {
-      // Dismiss any leftover thinking message from a previous turn
-      if (relayData.thinkingMessageId) {
-        this.sendQueue.recallMessage(relayData.thinkingMessageId).catch(() => {});
-        relayData.thinkingMessageId = null;
-      }
-      const thinkingMsgId = await this.sendQueue.enqueueWithMessageId(chatId, "⏳ 思考中...", true);
-      relayData.thinkingMessageId = thinkingMsgId;
+      this.sendQueue.enqueue(chatId, "⏳ 处理中", true);
     }
 
     this.wsBridge.injectUserMessage(sessionId, text);
