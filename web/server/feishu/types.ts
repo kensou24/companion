@@ -70,8 +70,6 @@ export interface FeishuRelayData {
   heartbeatTimer: ReturnType<typeof setTimeout> | null;
   turnStartTime: number;
   lastActiveToolName: string;
-  /** Message ID of the "thinking" indicator — recalled when content arrives */
-  thinkingMessageId: string | null;
 }
 
 export interface FeishuSendQueueItem {
