@@ -2687,11 +2687,18 @@ export class CodexAdapter implements IBackendAdapter {
 
     const updates: Partial<SessionState> = {};
 
-    // Use last turn's input tokens for context usage — that's what's actually in the window
+    // Use last turn's input tokens for context usage — that's what's actually in the window.
+    // Subtract a baseline (system instructions) from both used tokens and context window
+    // so the percentage reflects effective user-visible capacity, matching cc-connect.
+    const CONTEXT_BASELINE_TOKENS = 12000;
     if (last && contextWindow && contextWindow > 0) {
       const usedInContext = (last.inputTokens || 0) + (last.outputTokens || 0);
-      const pct = Math.round((usedInContext / contextWindow) * 100);
-      updates.context_used_percent = Math.max(0, Math.min(pct, 100));
+      const effectiveWindow = contextWindow - CONTEXT_BASELINE_TOKENS;
+      if (effectiveWindow > 0) {
+        const effectiveUsed = Math.max(0, usedInContext - CONTEXT_BASELINE_TOKENS);
+        const pct = Math.round((effectiveUsed / effectiveWindow) * 100);
+        updates.context_used_percent = Math.max(0, Math.min(pct, 100));
+      }
     }
 
     // Forward cumulative token breakdown for display in the UI

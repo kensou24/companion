@@ -57,12 +57,12 @@ function Get-ProcessName($pid) {
 function Stop-PidFileSafe($pidFile, $label) {
     if (-not (Test-Path $pidFile)) { return $false }
 
-    $pid = (Get-Content $pidFile -Raw).Trim()
-    if (-not $pid) { return $false }
+    $pidVal = (Get-Content $pidFile -Raw).Trim()
+    if (-not $pidVal) { return $false }
 
-    $proc = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    $proc = Get-Process -Id $pidVal -ErrorAction SilentlyContinue
     if (-not $proc) {
-        Write-Warn "$label (PID $pid from file) is not running"
+        Write-Warn "$label (PID $pidVal from file) is not running"
         Remove-Item $pidFile -Force -ErrorAction SilentlyContinue
         return $false
     }
@@ -70,25 +70,25 @@ function Stop-PidFileSafe($pidFile, $label) {
     # Verify this is a bun/node process
     $name = $proc.ProcessName
     if ($name -notmatch "bun|node") {
-        Write-Warn "PID $pid ($name) doesn't look like a dev server"
+        Write-Warn "PID $pidVal ($name) doesn't look like a dev server"
         Write-Die "Refusing to kill unexpected process. Check $pidFile manually."
     }
 
-    Write-Step "Stopping $label (PID $pid)..."
-    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    Write-Step "Stopping $label (PID $pidVal)..."
+    Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
 
     # Wait for graceful shutdown (up to 5 seconds)
     $waited = 0
     while ($waited -lt 5) {
-        if (-not (Get-Process -Id $pid -ErrorAction SilentlyContinue)) { break }
+        if (-not (Get-Process -Id $pidVal -ErrorAction SilentlyContinue)) { break }
         Start-Sleep -Seconds 1
         $waited++
     }
 
     # Force kill if still running
-    if (Get-Process -Id $pid -ErrorAction SilentlyContinue) {
+    if (Get-Process -Id $pidVal -ErrorAction SilentlyContinue) {
         Write-Warn "$label didn't exit gracefully, force killing..."
-        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 1
     }
 
@@ -100,17 +100,17 @@ function Stop-PidFileSafe($pidFile, $label) {
 function Stop-PortSafe($port, $label) {
     if (-not (Test-PortListening $port)) { return $false }
 
-    $pid = Get-PidOnPort $port
-    if (-not $pid) { return $false }
+    $pidVal = Get-PidOnPort $port
+    if (-not $pidVal) { return $false }
 
-    $name = Get-ProcessName $pid
+    $name = Get-ProcessName $pidVal
     if ($name -notmatch "bun|node") {
-        Write-Warn "Port $port is occupied by unexpected process (PID $pid, $name)"
+        Write-Warn "Port $port is occupied by unexpected process (PID $pidVal, $name)"
         Write-Die "Refusing to kill unexpected process on port $port."
     }
 
-    Write-Step "Stopping $label on port $port (PID $pid)..."
-    Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    Write-Step "Stopping $label on port $port (PID $pidVal)..."
+    Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
 
     # Wait for shutdown
     $waited = 0
@@ -121,10 +121,10 @@ function Stop-PortSafe($port, $label) {
     }
 
     if (Test-PortListening $port) {
-        $pid = Get-PidOnPort $port
-        if ($pid) {
+        $pidVal = Get-PidOnPort $port
+        if ($pidVal) {
             Write-Warn "$label didn't exit gracefully, force killing..."
-            Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+            Stop-Process -Id $pidVal -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 1
         }
     }
@@ -196,6 +196,7 @@ function Start-All {
     }
 
     Write-Step "Starting backend on port $BACKEND_PORT..."
+    $env:NODE_ENV = "development"
     $proc = Start-Process -FilePath "bun" -ArgumentList "--watch","server/index.ts" `
         -NoNewWindow -PassThru `
         -RedirectStandardOutput $BACKEND_LOG `

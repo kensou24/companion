@@ -2640,8 +2640,11 @@ describe("CodexAdapter", () => {
 
     const lastUpdate = sessionUpdates[sessionUpdates.length - 1];
 
-    // context_used_percent should use last turn: (85000 + 5000) / 258400 ≈ 35%
-    expect(lastUpdate.session.context_used_percent).toBe(35);
+    // context_used_percent uses last turn with baseline deduction:
+    // effectiveWindow = 258400 - 12000 = 246400
+    // effectiveUsed = max(0, 90000 - 12000) = 78000
+    // pct = round(78000 / 246400 * 100) ≈ 32%
+    expect(lastUpdate.session.context_used_percent).toBe(32);
 
     // codex_token_details should still show cumulative totals
     expect(lastUpdate.session.codex_token_details?.inputTokens).toBe(1_150_000);
@@ -3948,7 +3951,9 @@ describe("CodexAdapter with ICodexTransport", () => {
     const updates = messages.filter((m) => m.type === "session_update") as Array<{
       session: { context_used_percent?: number; codex_token_details?: { inputTokens?: number; outputTokens?: number } };
     }>;
-    expect(updates.some((u) => u.session.context_used_percent === 10)).toBe(true);
+    // contextWindow (1000) is smaller than baseline (12000), so effectiveWindow < 0
+    // and context_used_percent is not set in the update.
+    expect(updates.every((u) => u.session.context_used_percent === undefined)).toBe(true);
     expect(updates.some((u) => u.session.codex_token_details?.inputTokens === 100)).toBe(true);
     expect(updates.some((u) => u.session.codex_token_details?.outputTokens === 20)).toBe(true);
 

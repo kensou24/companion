@@ -808,14 +808,20 @@ function handleParsedMessage(
       if (typeof r.total_lines_removed === "number") {
         sessionUpdates.total_lines_removed = r.total_lines_removed;
       }
-      // Compute context % from modelUsage if available
+      // Compute context % from modelUsage if available.
+      // Subtract a baseline (system instructions) so the percentage reflects
+      // effective user-visible capacity, matching cc-connect.
       if (r.modelUsage) {
+        const baseline = 12000;
         for (const usage of Object.values(r.modelUsage)) {
           if (usage.contextWindow > 0) {
-            const pct = Math.round(
-              ((usage.inputTokens + usage.outputTokens) / usage.contextWindow) * 100
-            );
-            sessionUpdates.context_used_percent = Math.max(0, Math.min(pct, 100));
+            const used = usage.inputTokens + usage.outputTokens;
+            const effectiveWindow = usage.contextWindow - baseline;
+            if (effectiveWindow > 0) {
+              const effectiveUsed = Math.max(0, used - baseline);
+              const pct = Math.round((effectiveUsed / effectiveWindow) * 100);
+              sessionUpdates.context_used_percent = Math.max(0, Math.min(pct, 100));
+            }
           }
         }
       }
@@ -1133,11 +1139,16 @@ function handleParsedMessage(
             resultUpdates.total_lines_removed = r.total_lines_removed;
           }
           if (r.modelUsage) {
+            const baseline = 12000;
             for (const usage of Object.values(r.modelUsage)) {
-              if ((usage as { contextWindow: number; inputTokens: number; outputTokens: number }).contextWindow > 0) {
-                const u = usage as { contextWindow: number; inputTokens: number; outputTokens: number };
-                const pct = Math.round(((u.inputTokens + u.outputTokens) / u.contextWindow) * 100);
-                resultUpdates.context_used_percent = Math.max(0, Math.min(pct, 100));
+              const u = usage as { contextWindow: number; inputTokens: number; outputTokens: number };
+              if (u.contextWindow > 0) {
+                const effectiveWindow = u.contextWindow - baseline;
+                if (effectiveWindow > 0) {
+                  const effectiveUsed = Math.max(0, u.inputTokens + u.outputTokens - baseline);
+                  const pct = Math.round((effectiveUsed / effectiveWindow) * 100);
+                  resultUpdates.context_used_percent = Math.max(0, Math.min(pct, 100));
+                }
               }
             }
           }

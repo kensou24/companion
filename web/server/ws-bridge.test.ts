@@ -1813,8 +1813,10 @@ describe("CLI message routing", () => {
     adapter.handleRawMessage(msg);
 
     const state = bridge.getSession("s1")!.state;
-    // (8000 + 2000) / 200000 * 100 = 5
-    expect(state.context_used_percent).toBe(5);
+    // effectiveWindow = 200000 - 12000 = 188000
+    // effectiveUsed = max(0, 10000 - 12000) = 0
+    // pct = round(0 / 188000 * 100) = 0
+    expect(state.context_used_percent).toBe(0);
   });
 
   it("stream_event: broadcasts without storing", async () => {

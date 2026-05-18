@@ -519,10 +519,14 @@ export class WsBridge {
             totalInput += usage.inputTokens;
             totalOutput += usage.outputTokens;
             if (usage.contextWindow > 0) {
-              const pct = Math.round(
-                ((usage.inputTokens + usage.outputTokens) / usage.contextWindow) * 100
-              );
-              session.state.context_used_percent = Math.max(0, Math.min(pct, 100));
+              const baseline = 12000;
+              const used = usage.inputTokens + usage.outputTokens;
+              const effectiveWindow = usage.contextWindow - baseline;
+              if (effectiveWindow > 0) {
+                const effectiveUsed = Math.max(0, used - baseline);
+                const pct = Math.round((effectiveUsed / effectiveWindow) * 100);
+                session.state.context_used_percent = Math.max(0, Math.min(pct, 100));
+              }
             }
           }
           session.state.input_tokens = totalInput;
