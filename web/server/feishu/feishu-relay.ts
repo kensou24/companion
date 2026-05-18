@@ -184,12 +184,13 @@ export class Relay {
   }
 
   /** Ensure relay subscriptions are active for a session.
-   *  chatId is the Feishu chat to send replies to (P2P chat_id or group chat_id). */
+   *  chatId is the Feishu chat to send replies to (P2P chat_id or group chat_id).
+   *  Always updates chatId so replies go to the chat the user messaged from. */
   ensureRelay(sessionId: string, userId: string, chatId: string): void {
-    if (this.sessionCleanups.has(sessionId)) return;
-
-    // Track the chatId for this session
+    // Always update chatId so replies route to the current chat context
     this.sessionChatIds.set(sessionId, chatId);
+
+    if (this.sessionCleanups.has(sessionId)) return;
 
     const cleanups: Array<() => void> = [];
     this.initRelayData(sessionId);
