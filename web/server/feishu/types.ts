@@ -70,6 +70,8 @@ export interface FeishuRelayData {
   heartbeatTimer: ReturnType<typeof setTimeout> | null;
   turnStartTime: number;
   lastActiveToolName: string;
+  /** Message ID of the "thinking" indicator — recalled when content arrives */
+  thinkingMessageId: string | null;
 }
 
 export interface FeishuSendQueueItem {
@@ -77,6 +79,8 @@ export interface FeishuSendQueueItem {
   text: string;
   priority?: boolean;
   _resolve?: (result: "ok" | "failed") => void;
+  /** Resolves with the Feishu message_id after successful send */
+  _messageIdResolve?: (messageId: string | null) => void;
   /** Optional media content to send instead of or alongside text */
   media?: FeishuMediaContent;
   /** Serialized Feishu card JSON string — when set, sent as msg_type="interactive" */
