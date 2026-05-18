@@ -57,6 +57,22 @@ export class FeishuSendQueue {
     this.drain();
   }
 
+  /** Enqueue a text message and return its Feishu message_id after it's sent. */
+  enqueueWithMessageId(chatId: string, text: string, priority?: boolean): Promise<string | null> {
+    return new Promise((resolve) => {
+      this.queue.push({ chatId, text, priority, _messageIdResolve: resolve });
+      this.drain();
+    });
+  }
+
+  /** Recall (delete) a previously sent message. Best-effort — errors are swallowed. */
+  async recallMessage(messageId: string): Promise<void> {
+    if (!this.client || !messageId) return;
+    try {
+      await this.client.im.message.delete({ path: { message_id: messageId } });
+    } catch { /* best-effort */ }
+  }
+
   /** Enqueue an interactive card message. cardJson should be a serialized Feishu card JSON string. */
   enqueueCard(chatId: string, cardJson: string, priority?: boolean): void {
     this.queue.push({ chatId, text: "", priority, card: cardJson });
@@ -140,10 +156,11 @@ export class FeishuSendQueue {
         const maxRetries = item.priority ? 4 : 2;
         let sent = false;
         let rateLimitHit = false;
+        let messageId: string | null = null;
 
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           try {
-            await this.sendItem(item);
+            messageId = await this.sendItem(item);
             sent = true;
             this.lastSendTs = Date.now();
             break;
@@ -184,6 +201,7 @@ export class FeishuSendQueue {
         }
 
         item._resolve?.(sent ? "ok" : "failed");
+        item._messageIdResolve?.(sent ? messageId : null);
       }
     } finally {
       this.sending = false;
@@ -195,11 +213,14 @@ export class FeishuSendQueue {
 
   // ── Send via Feishu SDK ────────────────────────────────────────────────
 
-  /** Dispatch a single queue item through the Feishu client. */
-  private async sendItem(item: FeishuSendQueueItem): Promise<void> {
+  /** Dispatch a single queue item through the Feishu client. Returns the message_id if available. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async sendItem(item: FeishuSendQueueItem): Promise<string | null> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let resp: any = null;
     if (item.card) {
       // Interactive card message
-      await this.client.im.message.create({
+      resp = await this.client.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: item.chatId,
@@ -215,7 +236,7 @@ export class FeishuSendQueue {
           data: { image_type: "message", image: media.data },
         });
         const imageKey = uploadResp?.data?.image_key;
-        await this.client.im.message.create({
+        resp = await this.client.im.message.create({
           params: { receive_id_type: "chat_id" },
           data: {
             receive_id: item.chatId,
@@ -233,7 +254,7 @@ export class FeishuSendQueue {
           },
         });
         const fileKey = uploadResp?.data?.file_key;
-        await this.client.im.message.create({
+        resp = await this.client.im.message.create({
           params: { receive_id_type: "chat_id" },
           data: {
             receive_id: item.chatId,
@@ -244,7 +265,7 @@ export class FeishuSendQueue {
       }
     } else if (item.text) {
       // Plain text message
-      await this.client.im.message.create({
+      resp = await this.client.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: item.chatId,
@@ -253,5 +274,6 @@ export class FeishuSendQueue {
         },
       });
     }
+    return resp?.data?.message_id ?? null;
   }
 }

@@ -178,6 +178,7 @@ export class Relay {
       heartbeatTimer: null,
       turnStartTime: Date.now(),
       lastActiveToolName: "",
+      thinkingMessageId: null,
     };
     this.sessionRelayData.set(sessionId, data);
     return data;
@@ -233,6 +234,9 @@ export class Relay {
       }
 
       if (delta.type === "text_delta" && typeof delta.text === "string") {
+        if (!relayData.contentSent) {
+          this.dismissThinking(sessionId);
+        }
         if (relayData.pendingThinking) {
           const thinkingText = relayData.pendingThinking.trim();
           if (thinkingText) {
@@ -264,6 +268,7 @@ export class Relay {
       const raw = message as Record<string, unknown>;
       const text = typeof raw.text === "string" ? raw.text : "";
       if (text.trim()) {
+        this.dismissThinking(sessionId);
         relaySend(formatMarkdown(text.trim()));
         const relayData = this.sessionRelayData.get(sessionId);
         if (relayData) {
@@ -381,6 +386,7 @@ export class Relay {
     // ── Result ─────────────────────────────────────────────────────────────
     const unsubResult = companionBus.on("message:result", ({ sessionId: sid, message }) => {
       if (sid !== sessionId) return;
+      this.dismissThinking(sessionId);
       const relayData = this.sessionRelayData.get(sessionId);
       const streamText = relayData?.pendingText ?? "";
       const streamlinedSent = relayData?.streamlinedSent ?? false;
@@ -658,6 +664,7 @@ export class Relay {
     const relayData = this.sessionRelayData.get(sessionId);
     if (relayData) {
       this.stopHeartbeat(sessionId);
+      this.dismissThinking(sessionId);
       if (relayData.toolNotifyBuffer.length > 0) {
         this.flushToolNotifyBuffer(sessionId);
       }
@@ -727,6 +734,15 @@ export class Relay {
     if (relayData?.heartbeatTimer) {
       clearTimeout(relayData.heartbeatTimer);
       relayData.heartbeatTimer = null;
+    }
+  }
+
+  /** Recall the "thinking" indicator message for a session, if any. */
+  dismissThinking(sessionId: string): void {
+    const relayData = this.sessionRelayData.get(sessionId);
+    if (relayData?.thinkingMessageId) {
+      this.deps.sendQueue.recallMessage(relayData.thinkingMessageId).catch(() => {});
+      relayData.thinkingMessageId = null;
     }
   }
 
