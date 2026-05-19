@@ -333,6 +333,14 @@ export class FeishuBridge {
       return;
     }
 
+    // Block messages to terminated sessions — no CLI process to handle them.
+    // Without this guard the "thinking" indicator and heartbeat start but
+    // the result event never fires, leaving the heartbeat spinning forever.
+    if (!session.stateMachine.isActive()) {
+      this.sendQueue.enqueue(chatId, "会话已终止，发送 /new 创建新会话。");
+      return;
+    }
+
     this.relay.ensureRelay(sessionId, userId, chatId);
     await this.sendTyping(chatId);
 

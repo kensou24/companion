@@ -359,6 +359,12 @@ export class WeChatBridge {
       return;
     }
 
+    // Block messages to terminated sessions — no CLI process to handle them.
+    if (!session.stateMachine.isActive()) {
+      this.sendQueue.enqueue(userId, "会话已终止，发送 /new 创建新会话。");
+      return;
+    }
+
     this.relay.ensureRelay(sessionId, userId);
     await this.sendTyping(userId);
     this.wsBridge.injectUserMessage(sessionId, text);
